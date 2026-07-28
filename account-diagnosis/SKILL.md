@@ -5,7 +5,7 @@ description: "处理 AI 顾问的完整问账户链路：读取 Route Extract �
 
 # Account Diagnosis
 
-作为“问账户”业务域的唯一 Skill 入口。按本文件规定的顺序加载内部模块，不自行发明意图、卡片、接口字段或业务数据。
+作为“问账户”业务域的唯一 Skill 入口。以 `documentation/卡片组件.md` 和 `documentation/AI顾问数据与取数协议.md` 为卡片及接口权威源，按本文件规定的顺序加载内部模块，不自行发明意图、卡片、接口字段或业务数据。
 
 ## 内部结构
 
@@ -46,10 +46,16 @@ account-diagnosis/
     ],
     "entities": {},
     "primaryScene": "问账户",
-    "isMultiScene": false
+    "isMultiScene": false,
+    "orchestration": null,
+    "clarify": {
+      "needed": false,
+      "question": null
+    }
   },
   "requestContext": {
-    "userId": "由可信系统注入",
+    "custNo": "由可信系统注入",
+    "accountName": "由可信系统按账户范围注入",
     "sessionId": "由可信系统注入"
   },
   "debug": false
@@ -58,6 +64,7 @@ account-diagnosis/
 
 - 只要 `scenes[]` 中存在 `scene = "问账户"` 就执行，不以 `primaryScene` 为唯一条件。
 - `routeResult` 必须来自 Route Extract，不得重新生成或改写。
+- 将完整 `routeResult` 原样交给账户意图识别模块；该模块只读取 `scenes` 和 `entities`，忽略 `orchestration`、`clarify` 及其他场景记录。
 - `requestContext` 只能原样传给数据层，不得由模型生成或修改。
 - 最终响应不得泄露内部身份和鉴权信息。
 
@@ -124,16 +131,19 @@ watchlist_valuation
 
 禁止因为 `subQuery` 中出现“收益”“持仓”等词额外加载其他模块。调用范围只由经过校验的 `accountScenes[]` 决定。
 
+模块只输出卡片计划或结构化错误，不生成占位 `sections`：
+
+```json
+{
+  "intent": "holding_structure",
+  "subQuery": "我都买了哪些",
+  "cards": []
+}
+```
+
 ### 4. 归一化卡片计划
 
-内部模块中的输出示例沿用旧卡片结构，作为卡片选择结果使用，不直接作为最终响应：
-
-- 保留 `cardId` 和 `dataMode`。
-- 将旧的 `dataQuery` 转换为 `data.request`。
-- 将 card 根级 `type` 和 `title` 作为内部组件及标题提示。
-- 不把根级 `type`、`title` 或 `dataQuery` 传入最终 `cards[]`。
-- 不使用内部模块的占位 `sections` 作为最终结果摘要。
-- 不生成模块没有选择的额外卡片。
+内部模块直接输出当前卡片结构。只保留 `cardId`、`dataMode` 和 `data`，不得生成旧字段 `type`、`title` 或 `dataQuery`。
 
 归一化结果：
 
@@ -145,16 +155,40 @@ watchlist_valuation
     "cardId": "ACC-11",
     "dataMode": "deferred",
     "data": {
-      "request": {}
+      "request": {
+        "method": "GET",
+        "path": "/v1/asset/agent/holding-detail",
+        "params": {
+          "custNo": "由可信系统注入",
+          "accountName": "由可信系统注入",
+          "type": "根据是否穿透基金确定"
+        }
+      }
     }
   }
 }
 ```
 
+卡片与接口必须符合以下已确认关系：
+
+| 卡片 | 接口 |
+| --- | --- |
+| ACC-01、ACC-02、ACC-04、ACC-07、ACC-09 | `/v1/asset/agent/total` |
+| ACC-11 | `/v1/asset/agent/holding-detail` |
+| ACC-12 | `/v1/asset/agent/list/classify` |
+| ACC-13-A | `/v1/asset/agent/analyze/profit/sum` 或 `/v1/asset/agent/analyze/profit/yield` |
+| ACC-13-B | `/v1/asset/agent/analyze/profit/yield` |
+| ACC-14 | `/v1/asset/agent/analyze/profit/calendar` |
+| ACC-15 | `/v1/asset/agent/analyze/attribution` |
+| ACC-19 | `/v1/asset/agent/share-detail` |
+
+ACC-03、ACC-05、ACC-06、ACC-08、ACC-10、ACC-18 当前没有已确认接口。模块命中这些卡片时返回结构化 `unsupported_card` 错误并停止，不得生成空请求或替代接口。
+
 ### 5. 获取真实数据
 
 - `inline`：使用模块已经提供的真实数据。
 - `deferred`：将 `data.request` 和可信 `requestContext` 交给数据层。
+- `data.request` 必须包含 `method = "GET"`、已确认的 `path` 和对象类型的 `params`。
 - 不使用示例值、`${userId}` 等占位符或模型生成值代替真实参数。
 - 取数失败时保留真实失败状态，不得改写为 `0`。
 - 数据层不可用时停止最终编排，返回结构化错误或待处理状态。
@@ -195,6 +229,9 @@ python3 scripts/compose_result.py --input normalized-input.json
 - 模块输出不是合法 JSON。
 - intent、cardId 或字段不符合协议。
 - cardId 重复或与账户意图归属冲突。
+- cardId 不在 `documentation/卡片组件.md` 中。
+- cardId 与 `data.request.path` 不符合已确认映射。
+- 命中当前无接口的卡片或诉求。
 - deferred 取数缺少请求信息。
 - 真实数据未返回但流程要求生成结果摘要。
 - 拼接脚本校验失败。

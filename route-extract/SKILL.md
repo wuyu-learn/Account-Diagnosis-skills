@@ -68,7 +68,12 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
     "strategy_names": []
   },
   "primaryScene": "问基金",
-  "isMultiScene": true
+  "isMultiScene": true,
+  "orchestration": null,
+  "clarify": {
+    "needed": false,
+    "question": null
+  }
 }
 ```
 
@@ -83,7 +88,9 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
 7. `entities` 汇总当前问题中明确出现的全部实体。六个键必须全部出现，没有命中时使用空数组 `[]`；不得编造原文或明确历史上下文中未出现的实体。
 8. 用户表达不完整时，仅可使用明确提供的历史对话补全。没有相关上下文且仍可判断时，选择最接近的场景并降低 `weight`，一般不高于 `0.6`。
 9. 输入为空、只有寒暄，或与投资业务完全无关时，不强行归类，输出空 `scenes`、空实体、`primaryScene: null` 和 `isMultiScene: false`。
-10. 输出必须是合法 JSON，不添加解释性文字。
+10. `orchestration` 为下游编排预留字段，当前阶段固定输出 `null`。
+11. `clarify` 必须包含 `needed` 和 `question`。当前阶段不发起澄清，固定输出 `{ "needed": false, "question": null }`。
+12. 所有顶层字段必须完整输出，不得省略；输出必须是合法 JSON，不添加解释性文字。
 
 ## 边界情况
 
@@ -114,7 +121,12 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
     "strategy_names": []
   },
   "primaryScene": "问基金",
-  "isMultiScene": true
+  "isMultiScene": true,
+  "orchestration": null,
+  "clarify": {
+    "needed": false,
+    "question": null
+  }
 }
 ```
 
@@ -134,6 +146,11 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
     "strategy_names": ["基金定投"]
   },
   "primaryScene": "问投教",
-  "isMultiScene": false
+  "isMultiScene": false,
+  "orchestration": null,
+  "clarify": {
+    "needed": false,
+    "question": null
+  }
 }
 ```

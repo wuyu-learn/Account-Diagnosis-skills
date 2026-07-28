@@ -29,36 +29,17 @@ description: "将 watchlist_valuation 账户意图映射为 ACC-18 自选基金�
 2. 询问当日表现、盘中估值、最新净值、净值是否更新或涨跌排序时输出 ACC-18。
 3. `subQuery` 中出现具体基金时保留基金名称或代码，以便数据查询过滤。
 4. 固定使用 `deferred`，不得生成具体估值、净值或涨跌数据。
-5. 只输出合法 JSON，不添加解释文字。
+5. 当前取数协议没有 ACC-18 的已确认接口。命中时输出 `unsupported_card` 错误并停止，不得生成空请求或沿用 `/api/account/card/acc18` 占位接口。
+6. 只输出合法 JSON，不添加解释文字。
 
 ## 输出
 
 ```json
 {
-  "meta": {
-    "scene": "问账户",
-    "intent": "watchlist_valuation"
-  },
-  "sections": [
-    {
-      "type": "summary",
-      "content": "已为您整理自选基金估值信息。"
-    }
-  ],
-  "cards": [
-    {
-      "cardId": "ACC-18",
-      "type": "acc18-watchlist-valuation",
-      "title": "自选基金估值卡",
-      "dataMode": "deferred",
-      "dataQuery": {
-        "api": "/api/account/card/acc18",
-        "params": {
-          "userId": "${userId}",
-          "date": "latest"
-        }
-      }
-    }
-  ]
+  "error": {
+    "code": "unsupported_card",
+    "cardId": "ACC-18",
+    "message": "当前没有可用于自选基金估值的已确认接口"
+  }
 }
 ```

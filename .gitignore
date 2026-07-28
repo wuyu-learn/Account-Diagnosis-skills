@@ -1,1 +1,4 @@
 .DS_Store
+.codex_tmp/
+__pycache__/
+*.py[cod]

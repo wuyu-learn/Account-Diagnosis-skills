@@ -36,11 +36,17 @@
   ],
   "entities": {},
   "primaryScene": "问账户",
-  "isMultiScene": false
+  "isMultiScene": false,
+  "orchestration": null,
+  "clarify": {
+    "needed": false,
+    "question": null
+  }
 }
 ```
 
 LLM 负责语义识别；代码负责补齐缺失值、规范字段、计算多场景标识及确认主场景。
+`orchestration` 是下游编排预留字段，在本阶段固定为 `null`；`clarify` 在本阶段固定为 `{ "needed": false, "question": null }`。
 
 ### Global Phase B：场景分发及业务域处理
 

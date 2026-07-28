@@ -63,6 +63,7 @@ description: "调度 AI 顾问最终结果编排：理解已完成取数的卡�
 - 按预期展示顺序生成 `items[]`。
 - 每个 item 必须包含一个 `section`，并可以包含一张 `card`。
 - 卡片只保留 `cardId`、`dataMode` 和 `data`。
+- deferred 卡片的 `data.request` 必须包含 `method`、`path` 和 `params`，且 cardId 与接口路径符合已确认映射。
 - 使用上游或场景合规规则提供的 `risk_warning`，不要自行编造合规文案。
 
 ## 工作流
@@ -133,6 +134,7 @@ python3 scripts/compose_result.py < normalized-input.json
 - 拒绝 card 根级的额外字段。
 - 校验 `dataMode` 只能为 `inline` 或 `deferred`。
 - 校验 `deferred` 卡片包含 `data.request`。
+- 校验请求方法为 `GET`、请求字段完整，并拒绝 cardId 未确认或接口路径错配。
 - 自动关联 `section.cardId` 与 `card.cardId`。
 - 拒绝重复或相互冲突的 `cardId`。
 - 保持 `items[]` 的展示顺序。

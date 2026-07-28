@@ -32,35 +32,30 @@ description: "将 holding_structure 账户意图映射为 ACC-11 持仓明细或
 2. 查询资产分布、配置结构、穿透维度或集中度时输出 ACC-12。
 3. 同时命中两个范围时按诉求先后输出两张卡片。
 4. 无法进一步判断但确定为 `holding_structure` 时，同时输出 ACC-11 和 ACC-12。
-5. 所有卡片固定使用 `deferred`，不得生成具体金额、比例或持仓。
-6. `sections` 只写概括性说明，不写未经查询的数据。
-7. 只输出合法 JSON，不添加解释文字。
+5. ACC-11 使用 `GET /v1/asset/agent/holding-detail`；ACC-12 使用 `GET /v1/asset/agent/list/classify`。
+6. 所有卡片固定使用 `deferred`，不得生成具体金额、比例或持仓。
+7. `sections` 只写概括性说明，不写未经查询的数据。
+8. 只输出合法 JSON，不添加解释文字。
 
 ## 输出
 
 ```json
 {
-  "meta": {
-    "scene": "问账户",
-    "intent": "holding_structure"
-  },
-  "sections": [
-    {
-      "type": "summary",
-      "content": "已为您整理持仓结构信息。"
-    }
-  ],
+  "intent": "holding_structure",
+  "subQuery": "我的持仓有哪些",
   "cards": [
     {
       "cardId": "ACC-11",
-      "type": "acc11-position-detail",
-      "title": "持仓明细",
       "dataMode": "deferred",
-      "dataQuery": {
-        "api": "/api/account/card/acc11",
-        "params": {
-          "userId": "${userId}",
-          "date": "latest"
+      "data": {
+        "request": {
+          "method": "GET",
+          "path": "/v1/asset/agent/holding-detail",
+          "params": {
+            "custNo": "由可信系统注入",
+            "accountName": "由可信系统注入",
+            "type": "根据是否穿透基金确定"
+          }
         }
       }
     }

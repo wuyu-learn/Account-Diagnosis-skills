@@ -1,8 +1,8 @@
-# AI 顾问数据与取数协议
+# AI 顾问数据接口
 
 ## 文档定位
 
-本文档是项目中数据来源、取数参数、接口字段和异常处理的统一归档入口，不定义完整响应骨架、内容顺序或页面编排。
+本文档是项目中接口定义、返回字段、数据状态和失败降级的统一归档入口，不定义完整响应骨架、内容顺序或页面编排。取数边界、数据提供方式和卡片接口对应关系见 `documentation/AI顾问取数协议.md`；卡片清单及无已确认接口的卡片见 `documentation/AI顾问卡片取数.md`。
 
 当前账户域接口依据：
 
@@ -13,88 +13,6 @@
 
 原始设计文档声明本次接口均为新接口。本文档保留原接口字段的 `camelCase` 命名，不擅自改名。
 
-## 取数边界
-
-- AI 只负责识别意图、选择卡片和生成取数计划，不得生成 `custNo`、账户身份或业务数据。
-- `custNo`、`accountName` 等身份及账户上下文必须由可信系统或数据层注入。
-- 所有金额、收益、净值、行情、持仓及归因数据必须来自真实接口响应。
-- 原始设计文档未说明参数必填性、鉴权方式、统一响应包裹、错误码和超时规则；相关内容在联调确认前不得自行假设。
-- 接口返回示例中的数值 `0` 和字符串 `"string"` 仅表示字段类型，不是业务默认值。
-
-## 数据模式
-
-卡片通过 `dataMode` 声明数据提供方式：
-
-| 模式 | 含义 |
-| --- | --- |
-| `inline` | 数据已经由可信数据层取得并直接包含在当前响应中 |
-| `deferred` | 当前响应提供取数请求，后续由编排层或前端调用资产中心接口 |
-
-### Inline
-
-```json
-{
-  "cardId": "CARD-ID",
-  "dataMode": "inline",
-  "data": {
-    "status": "available"
-  }
-}
-```
-
-- `data` 必须来自真实数据源。
-- 数据缺失时返回明确状态，不使用示例值填充。
-- 调用方无需再次请求卡片接口。
-
-### Deferred
-
-统一使用 `data.request` 表达取数计划：
-
-```json
-{
-  "cardId": "ACC-13",
-  "dataMode": "deferred",
-  "data": {
-    "request": {
-      "method": "GET",
-      "path": "/v1/asset/agent/analyze/profit/sum",
-      "params": {
-        "custNo": "由可信系统注入",
-        "accountName": "由可信系统注入"
-      }
-    }
-  }
-}
-```
-
-基本流程：
-
-```text
-识别账户意图
-→ 选择卡片
-→ 生成 data.request
-→ 可信系统补齐身份及账户参数
-→ 调用资产中心接口
-→ 校验并归一化真实响应
-→ 编排卡片和文案
-```
-
-旧模块中的 `dataQuery.api` 和 `dataQuery.params` 仅作为过渡输入，进入总控流程时归一化为：
-
-```json
-{
-  "data": {
-    "request": {
-      "method": "GET",
-      "path": "/v1/asset/agent/...",
-      "params": {}
-    }
-  }
-}
-```
-
-不得在最终卡片中同时保留 `data.request` 和 `dataQuery`。
-
 ## 公共请求参数
 
 | 参数 | 类型 | 来源 | 说明 |
@@ -103,34 +21,6 @@
 | `accountName` | string | 用户明确表达或可信系统补齐 | 账户名称或账户范围 |
 
 原始设计文档没有标注以上参数是否必填，也没有说明 `accountName` 的枚举和值域，需在接口联调中确认。
-
-## 账户域接口目录
-
-以下卡片对应关系结合现有账户卡片语义和已确认的业务边界归档。原始接口文档没有直接给出 ACC 编号；未列入映射的卡片不得仅凭接口名称推断为可取数。
-
-| 业务能力 | 方法与路径 | 业务参数 | 现有卡片候选 |
-| --- | --- | --- | --- |
-| 账户总资产和账户详情 | `GET /v1/asset/agent/total` | `assetType` | ACC-01、ACC-02、ACC-04、ACC-07、ACC-09 |
-| 全账户持仓明细 | `GET /v1/asset/agent/holding-detail` | `type` | ACC-11 |
-| 产品份额明细 | `GET /v1/asset/agent/share-detail` | `productId` | ACC-19 |
-| 资产结构 | `GET /v1/asset/agent/list/classify` | `type` | ACC-12 |
-| 账户收益总览 | `GET /v1/asset/agent/analyze/profit/sum` | 无 | ACC-13 |
-| 账户收益走势图 | `GET /v1/asset/agent/analyze/profit/yield` | `dateType`、`indexCodes` | ACC-13-A、ACC-13-B |
-| 账户收益日历 | `GET /v1/asset/agent/analyze/profit/calendar` | `dateType`、`profitType`、`date` | ACC-14 |
-| 收益归因 | `GET /v1/asset/agent/analyze/attribution` | `dateType`、`type` | ACC-15、ACC-16、ACC-17 |
-| 账户管家 | `GET /v1/asset/agent/index` | 无 | 暂无独立卡片编号 |
-| 今日提醒 | `GET /v1/asset/agent/holding-signal` | 无 | 暂无独立卡片编号 |
-
-### 当前无可用接口的持有详情卡片
-
-下列卡片属于指定账户、组合或产品的持有详情。现有 `/v1/asset/agent/holding-detail` 只能用于 ACC-11 全账户持仓明细，不能替代这些持有详情接口：
-
-- ACC-03：基金持有详情
-- ACC-05：投顾组合详情
-- ACC-08：货币持有详情
-- ACC-10：专户持有详情
-
-`/v1/asset/agent/share-detail` 只对应 ACC-19 产品份额明细，也不得替代 ACC-03、ACC-05、ACC-08 或 ACC-10。
 
 ## 接口定义
 
@@ -145,6 +35,16 @@
 | `custNo` | string | 客户标识 |
 | `accountName` | string | 账户名称 |
 | `assetType` | string | 资产类型；原文说明传 `9` 查询全部分类占比，否则查询某一类型汇总 |
+
+已确认取值方式（均不传 `custNo` 和 `accountName`）：
+
+| 卡片 | 取值方式 |
+| --- | --- |
+| ACC-01 账户总资产 | `{"assetType": "9"}` |
+| ACC-02 基金账户详情 | `{"assetType": "1"}` |
+| ACC-04 投顾账户详情 | `{"assetType": "6"}` |
+| ACC-07 货币账户详情 | `{"assetType": "0"}` |
+| ACC-09 专户账户详情 | `{"assetType": "4"}` |
 
 返回字段：
 
@@ -164,6 +64,8 @@
 | `custNo` | string | 客户标识 |
 | `accountName` | string | 账户名称 |
 | `type` | string | `1` 按类型；`2` 按基金穿透 |
+
+已确认：ACC-11 持仓明细的取值方式为 `{"type": "1"}`，不传 `custNo` 和 `accountName`。
 
 返回字段：
 
@@ -337,7 +239,3 @@
 6. 日期字段的格式、时区、交易日口径和统计区间边界。
 7. 金额、比例、收益率和净值字段的单位、精度及正负号规则。
 8. 接口 `status`、`yieldStatus` 到项目统一数据状态的映射。
-9. 除本文已确认的映射外，其余 ACC 卡片与资产中心接口的最终一对一或一对多关系。
-10. 账户管家、今日提醒是否需要新增独立卡片编号。
-11. ACC-18 自选基金估值的数据接口未出现在本设计文档中，仍需补充。
-12. ACC-03、ACC-05、ACC-08、ACC-10 持有详情及 ACC-06 投顾组合调仓记录所需接口未在本设计文档中明确给出，仍需补充。

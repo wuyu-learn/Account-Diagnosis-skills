@@ -5,7 +5,7 @@ description: "将 account_overview 账户意图映射为账户总资产、账户
 
 # Account Asset Overview
 
-作为账户域 Phase C，只处理 `intent = "account_overview"` 的单条路由记录。以 `documentation/卡片组件.md` 和 `documentation/AI顾问数据与取数协议.md` 为准选择卡片及真实接口，不生成或猜测账户数据。
+作为账户域 Account Step 2（卡片选择与取数计划），只处理 `intent = "account_overview"` 的单条路由记录。按本文件规则选择卡片，不生成或猜测账户数据。
 
 ## 输入
 
@@ -17,7 +17,7 @@ description: "将 account_overview 账户意图映射为账户总资产、账户
 }
 ```
 
-`intent` 和 `subQuery` 对应 Account Intent Router 的一条 `accountScenes` 记录；`entities` 由编排层从 Phase A 原样传入。
+`intent` 和 `subQuery` 对应 Account Intent Router 的一条 `accountScenes` 记录；`entities` 由编排层从 Global Phase A 原样传入。
 
 ## 卡片
 
@@ -45,10 +45,10 @@ description: "将 account_overview 账户意图映射为账户总资产、账户
 6. 专户账户整体进入 ACC-09；单个专户产品下钻进入 ACC-10。
 7. 一个 `subQuery` 同时明确命中多个卡片时，按诉求先后输出对应卡片。
 8. 无法确定具体账户类型时输出 ACC-01。
-9. ACC-01、ACC-02、ACC-04、ACC-07、ACC-09 使用 `GET /v1/asset/agent/total`；根据账户类型由可信系统补齐 `assetType` 和 `accountName`。
-10. ACC-19 使用 `GET /v1/asset/agent/share-detail`，由可信系统补齐 `productId`。
-11. ACC-03、ACC-05、ACC-06、ACC-08、ACC-10 当前没有可用接口。命中时输出结构化 `unsupported_card` 错误并停止，不得生成空 `data.request`，不得用 `/holding-detail` 或 `/share-detail` 替代。
-12. 所有可取数卡片固定使用 `deferred`，不得生成具体资产、收益、份额或调仓记录。
+9. 可取数卡片固定输出 `dataMode: "deferred"` 且 `data` 为空对象；取数写在前端组件里，本模块不生成 `data.request`。
+10. `subQuery` 未指定具体产品时不得输出 ACC-19；诉求实为账户整体情况时改输出对应账户详情卡。
+11. ACC-03、ACC-05、ACC-06、ACC-08、ACC-10 当前没有可用接口。命中时输出结构化 `unsupported_card` 错误并停止，不得生成 `data.request`，不得用 `/holding-detail` 或 `/share-detail` 替代。
+12. 不得生成具体资产、收益、份额或调仓记录。
 13. 只输出合法 JSON，不添加解释文字。
 
 ## 输出
@@ -61,17 +61,23 @@ description: "将 account_overview 账户意图映射为账户总资产、账户
     {
       "cardId": "ACC-02",
       "dataMode": "deferred",
-      "data": {
-        "request": {
-          "method": "GET",
-          "path": "/v1/asset/agent/total",
-          "params": {
-            "custNo": "由可信系统注入",
-            "accountName": "由可信系统注入",
-            "assetType": "由可信系统按账户类型注入"
-          }
-        }
-      }
+      "data": {}
+    }
+  ]
+}
+```
+
+ACC-19 输出：
+
+```json
+{
+  "intent": "account_overview",
+  "subQuery": "我这只产品有多少份额",
+  "cards": [
+    {
+      "cardId": "ACC-19",
+      "dataMode": "deferred",
+      "data": {}
     }
   ]
 }

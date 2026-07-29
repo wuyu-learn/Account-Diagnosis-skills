@@ -1,11 +1,11 @@
 ---
 name: account-intent-router
-description: "识别并拆分账户问题的二级意图，覆盖资产总览、持仓结构、收益表现、收益归因和自选基金估值。上游 Route & Extract 产生问账户场景，需要按账户卡片大类生成 Phase C 路由 JSON 时使用。"
+description: "识别并拆分账户问题的二级意图，覆盖资产总览、持仓结构、收益表现、收益归因和自选基金估值。上游 Route & Extract 产生问账户场景，需要按账户卡片大类生成 Account Step 1 路由 JSON 时使用。"
 ---
 
 # Account Intent Router
 
-作为账户域三段式流水线的 Phase B，只处理上游 `scenes` 中 `scene = "问账户"` 的记录。识别账户卡片大类并输出路由结果，不回答业务问题。
+作为账户域三段式流水线的 Account Step 1（账户意图识别），只处理上游 `scenes` 中 `scene = "问账户"` 的记录。识别账户卡片大类并输出路由结果，不回答业务问题。
 
 ## 输入
 

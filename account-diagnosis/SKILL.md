@@ -5,7 +5,7 @@ description: "处理 AI 顾问的完整问账户链路：读取 Route Extract �
 
 # Account Diagnosis
 
-作为“问账户”业务域的唯一 Skill 入口。以 `documentation/卡片组件.md` 和 `documentation/AI顾问数据与取数协议.md` 为卡片及接口权威源，按本文件规定的顺序加载内部模块，不自行发明意图、卡片、接口字段或业务数据。
+作为“问账户”业务域的唯一 Skill 入口。本文件及 `references/` 内部模块自带全部意图、卡片和取数规则，按本文件规定的顺序加载内部模块，不自行发明意图、卡片、接口字段或业务数据。
 
 ## 内部结构
 
@@ -154,41 +154,19 @@ watchlist_valuation
   "card": {
     "cardId": "ACC-11",
     "dataMode": "deferred",
-    "data": {
-      "request": {
-        "method": "GET",
-        "path": "/v1/asset/agent/holding-detail",
-        "params": {
-          "custNo": "由可信系统注入",
-          "accountName": "由可信系统注入",
-          "type": "根据是否穿透基金确定"
-        }
-      }
-    }
+    "data": {}
   }
 }
 ```
 
-卡片与接口必须符合以下已确认关系：
-
-| 卡片 | 接口 |
-| --- | --- |
-| ACC-01、ACC-02、ACC-04、ACC-07、ACC-09 | `/v1/asset/agent/total` |
-| ACC-11 | `/v1/asset/agent/holding-detail` |
-| ACC-12 | `/v1/asset/agent/list/classify` |
-| ACC-13-A | `/v1/asset/agent/analyze/profit/sum` 或 `/v1/asset/agent/analyze/profit/yield` |
-| ACC-13-B | `/v1/asset/agent/analyze/profit/yield` |
-| ACC-14 | `/v1/asset/agent/analyze/profit/calendar` |
-| ACC-15 | `/v1/asset/agent/analyze/attribution` |
-| ACC-19 | `/v1/asset/agent/share-detail` |
+`deferred` 卡片的 `data` 为空对象，取数写在前端组件里，不生成 `data.request`。可取数卡片为 ACC-01、ACC-02、ACC-04、ACC-07、ACC-09、ACC-11、ACC-12、ACC-13-A、ACC-13-B、ACC-14、ACC-15、ACC-19，各卡触发范围见对应内部模块。
 
 ACC-03、ACC-05、ACC-06、ACC-08、ACC-10、ACC-18 当前没有已确认接口。模块命中这些卡片时返回结构化 `unsupported_card` 错误并停止，不得生成空请求或替代接口。
 
 ### 5. 获取真实数据
 
 - `inline`：使用模块已经提供的真实数据。
-- `deferred`：将 `data.request` 和可信 `requestContext` 交给数据层。
-- `data.request` 必须包含 `method = "GET"`、已确认的 `path` 和对象类型的 `params`。
+- `deferred`：`data` 为空，由前端组件按组件内取数逻辑调用资产中心接口；可信 `requestContext` 原样传给数据层。
 - 不使用示例值、`${userId}` 等占位符或模型生成值代替真实参数。
 - 取数失败时保留真实失败状态，不得改写为 `0`。
 - 数据层不可用时停止最终编排，返回结构化错误或待处理状态。
@@ -229,10 +207,9 @@ python3 scripts/compose_result.py --input normalized-input.json
 - 模块输出不是合法 JSON。
 - intent、cardId 或字段不符合协议。
 - cardId 重复或与账户意图归属冲突。
-- cardId 不在 `documentation/卡片组件.md` 中。
-- cardId 与 `data.request.path` 不符合已确认映射。
+- cardId 不在本技能的卡片清单中。
 - 命中当前无接口的卡片或诉求。
-- deferred 取数缺少请求信息。
+- deferred 卡片携带 `data.request` 等取数字段。
 - 真实数据未返回但流程要求生成结果摘要。
 - 拼接脚本校验失败。
 

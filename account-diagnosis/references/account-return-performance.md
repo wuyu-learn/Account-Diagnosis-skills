@@ -5,7 +5,7 @@ description: "将 return_performance 账户意图映射为 ACC-13-A 账户收益
 
 # Account Return Performance
 
-作为账户域 Phase C，只处理 `intent = "return_performance"` 的单条路由记录。根据用户关注的收益口径和时间范围选择收益卡片，不生成或猜测收益数据。
+作为账户域 Account Step 2（卡片选择与取数计划），只处理 `intent = "return_performance"` 的单条路由记录。根据用户关注的收益口径和时间范围选择收益卡片，不生成或猜测收益数据。
 
 ## 输入
 
@@ -32,10 +32,9 @@ description: "将 return_performance 账户意图映射为 ACC-13-A 账户收益
 3. 询问每日、每月、每年明细或哪段时间赚亏时输出 ACC-14。
 4. 同时询问总览和收益明细时，按诉求先后输出对应卡片。
 5. 时间表达不明确时输出 ACC-13-A。
-6. ACC-13-A 的简单总览使用 `/analyze/profit/sum`；滚动区间或基准比较使用 `/analyze/profit/yield`。
-7. ACC-13-B 使用 `/analyze/profit/yield`；ACC-14 使用 `/analyze/profit/calendar`。
-8. 所有卡片固定使用 `deferred`，不得生成具体收益、收益率或基准数据。
-9. 只输出合法 JSON，不添加解释文字。
+6. 可取数卡片固定输出 `dataMode: "deferred"` 且 `data` 为空对象；取数写在前端组件里，本模块不生成 `data.request`。
+7. 不得生成具体收益、收益率或基准数据。
+8. 只输出合法 JSON，不添加解释文字。
 
 ## 输出
 
@@ -47,18 +46,7 @@ description: "将 return_performance 账户意图映射为 ACC-13-A 账户收益
     {
       "cardId": "ACC-13-B",
       "dataMode": "deferred",
-      "data": {
-        "request": {
-          "method": "GET",
-          "path": "/v1/asset/agent/analyze/profit/yield",
-          "params": {
-            "custNo": "由可信系统注入",
-            "accountName": "由可信系统注入",
-            "dateType": "根据用户时间范围确定",
-            "indexCodes": "根据用户明确要求确定"
-          }
-        }
-      }
+      "data": {}
     }
   ]
 }

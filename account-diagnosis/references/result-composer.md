@@ -63,7 +63,7 @@ description: "调度 AI 顾问最终结果编排：理解已完成取数的卡�
 - 按预期展示顺序生成 `items[]`。
 - 每个 item 必须包含一个 `section`，并可以包含一张 `card`。
 - 卡片只保留 `cardId`、`dataMode` 和 `data`。
-- deferred 卡片的 `data.request` 必须包含 `method`、`path` 和 `params`，且 cardId 与接口路径符合已确认映射。
+- deferred 卡片的 `data` 必须为空对象；取数由前端组件完成，不得携带 `data.request` 等取数字段。
 - 使用上游或场景合规规则提供的 `risk_warning`，不要自行编造合规文案。
 
 ## 工作流
@@ -120,7 +120,7 @@ python3 scripts/compose_result.py < normalized-input.json
 ```
 
 - 保持 `cardId` 与上游一致。
-- 将实际组件数据或取数信息放入 `data`。
+- `inline` 卡片将实际组件数据放入 `data`；deferred 卡片的 `data` 为空对象。
 - 不输出根级 `type`、`chartType`、`title` 或 `dataQuery`。
 - 不把缺失值改写为 `0`，不生成示例数据填充空字段。
 - 同一个 `cardId` 在一次响应中只能出现一次。
@@ -133,8 +133,7 @@ python3 scripts/compose_result.py < normalized-input.json
 - 拒绝 section 中未定义的 `content`。
 - 拒绝 card 根级的额外字段。
 - 校验 `dataMode` 只能为 `inline` 或 `deferred`。
-- 校验 `deferred` 卡片包含 `data.request`。
-- 校验请求方法为 `GET`、请求字段完整，并拒绝 cardId 未确认或接口路径错配。
+- 校验 `deferred` 卡片的 `data` 为空对象，拒绝携带 `data.request` 等取数字段。
 - 自动关联 `section.cardId` 与 `card.cardId`。
 - 拒绝重复或相互冲突的 `cardId`。
 - 保持 `items[]` 的展示顺序。

@@ -10,25 +10,6 @@ from pathlib import Path
 from typing import Any, TextIO
 
 
-CARD_ENDPOINTS = {
-    "ACC-01": {"/v1/asset/agent/total"},
-    "ACC-02": {"/v1/asset/agent/total"},
-    "ACC-04": {"/v1/asset/agent/total"},
-    "ACC-07": {"/v1/asset/agent/total"},
-    "ACC-09": {"/v1/asset/agent/total"},
-    "ACC-11": {"/v1/asset/agent/holding-detail"},
-    "ACC-12": {"/v1/asset/agent/list/classify"},
-    "ACC-13-A": {
-        "/v1/asset/agent/analyze/profit/sum",
-        "/v1/asset/agent/analyze/profit/yield",
-    },
-    "ACC-13-B": {"/v1/asset/agent/analyze/profit/yield"},
-    "ACC-14": {"/v1/asset/agent/analyze/profit/calendar"},
-    "ACC-15": {"/v1/asset/agent/analyze/attribution"},
-    "ACC-19": {"/v1/asset/agent/share-detail"},
-}
-
-
 class CompositionError(ValueError):
     """Raised when input violates the result contract."""
 
@@ -82,39 +63,11 @@ def normalize_card(value: Any, index: int) -> dict[str, Any]:
         )
 
     data = require_object(card.get("data"), f"items[{index}].card.data")
-    if data_mode == "deferred":
-        request = require_object(
-            data.get("request"), f"items[{index}].card.data.request"
+    if data_mode == "deferred" and data:
+        raise CompositionError(
+            f"items[{index}].card.data must be empty for deferred cards; "
+            "fetching is handled by the frontend component"
         )
-        allowed_request_keys = {"method", "path", "params"}
-        unsupported_request_keys = sorted(set(request) - allowed_request_keys)
-        if unsupported_request_keys:
-            raise CompositionError(
-                f"items[{index}].card.data.request has unsupported fields: "
-                + ", ".join(unsupported_request_keys)
-            )
-        method = require_string(
-            request.get("method"), f"items[{index}].card.data.request.method"
-        )
-        if method != "GET":
-            raise CompositionError(
-                f"items[{index}].card.data.request.method must be GET"
-            )
-        path = require_string(
-            request.get("path"), f"items[{index}].card.data.request.path"
-        )
-        require_object(
-            request.get("params"), f"items[{index}].card.data.request.params"
-        )
-        allowed_paths = CARD_ENDPOINTS.get(card_id)
-        if allowed_paths is None:
-            raise CompositionError(
-                f"{card_id} has no confirmed deferred endpoint"
-            )
-        if path not in allowed_paths:
-            raise CompositionError(
-                f"{card_id} cannot use deferred endpoint: {path}"
-            )
 
     return {"cardId": card_id, "dataMode": data_mode, "data": data}
 

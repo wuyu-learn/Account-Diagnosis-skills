@@ -5,7 +5,7 @@ description: "将 holding_structure 账户意图映射为 ACC-11 持仓明细或
 
 # Account Holding Structure
 
-作为账户域 Phase C，只处理 `intent = "holding_structure"` 的单条路由记录。根据 `subQuery` 选择持仓结构卡片，不生成或猜测账户数据。
+作为账户域 Account Step 2（卡片选择与取数计划），只处理 `intent = "holding_structure"` 的单条路由记录。根据 `subQuery` 选择持仓结构卡片，不生成或猜测账户数据。
 
 ## 输入
 
@@ -17,7 +17,7 @@ description: "将 holding_structure 账户意图映射为 ACC-11 持仓明细或
 }
 ```
 
-`intent` 和 `subQuery` 直接对应 Account Intent Router 的一条 `accountScenes` 记录；`entities` 由编排层从 Phase A 原样传入。
+`intent` 和 `subQuery` 直接对应 Account Intent Router 的一条 `accountScenes` 记录；`entities` 由编排层从 Global Phase A 原样传入。
 
 ## 卡片
 
@@ -32,8 +32,8 @@ description: "将 holding_structure 账户意图映射为 ACC-11 持仓明细或
 2. 查询资产分布、配置结构、穿透维度或集中度时输出 ACC-12。
 3. 同时命中两个范围时按诉求先后输出两张卡片。
 4. 无法进一步判断但确定为 `holding_structure` 时，同时输出 ACC-11 和 ACC-12。
-5. ACC-11 使用 `GET /v1/asset/agent/holding-detail`；ACC-12 使用 `GET /v1/asset/agent/list/classify`。
-6. 所有卡片固定使用 `deferred`，不得生成具体金额、比例或持仓。
+5. 可取数卡片固定输出 `dataMode: "deferred"` 且 `data` 为空对象；取数写在前端组件里，本模块不生成 `data.request`。
+6. 不得生成具体金额、比例或持仓。
 7. `sections` 只写概括性说明，不写未经查询的数据。
 8. 只输出合法 JSON，不添加解释文字。
 
@@ -47,17 +47,7 @@ description: "将 holding_structure 账户意图映射为 ACC-11 持仓明细或
     {
       "cardId": "ACC-11",
       "dataMode": "deferred",
-      "data": {
-        "request": {
-          "method": "GET",
-          "path": "/v1/asset/agent/holding-detail",
-          "params": {
-            "custNo": "由可信系统注入",
-            "accountName": "由可信系统注入",
-            "type": "根据是否穿透基金确定"
-          }
-        }
-      }
+      "data": {}
     }
   ]
 }

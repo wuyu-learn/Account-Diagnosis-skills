@@ -64,6 +64,29 @@ section.title
 
 `narrative` 可以概括或解释卡片结果。卡片的数据载荷保存在 `cards[]` 中；该载荷可以是实际数据，也可以是后续取数信息。
 
+## Section 类型
+
+基金解读页面结构（按展示顺序）：
+
+```text
+基金解读
+├── 核心观点 summary
+├── 业绩表现 performance
+├── 风险分析 risk
+├── 持仓分析 holdings
+└── 综合建议 conclusion
+```
+
+| `type` | 名称 |
+| --- | --- |
+| `summary` | 核心观点 |
+| `performance` | 业绩表现 |
+| `risk` | 风险分析 |
+| `holdings` | 持仓分析 |
+| `conclusion` | 综合建议 |
+
+其他场景（问账户、问市场等）的页面结构和 section 类型待补充。
+
 ## Cards
 
 `cards[]` 是卡片数据池，不决定页面展示顺序。section 通过 `cardId` 查找相同标识的卡片。

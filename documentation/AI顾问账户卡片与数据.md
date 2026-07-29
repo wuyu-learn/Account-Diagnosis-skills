@@ -1,8 +1,8 @@
-# AI 顾问数据接口
+# AI 顾问账户卡片与数据
 
 ## 文档定位
 
-本文档是项目中接口定义、返回字段、数据状态和失败降级的统一归档入口，不定义完整响应骨架、内容顺序或页面编排。取数边界、数据提供方式和卡片接口对应关系见 `documentation/AI顾问取数协议.md`；卡片清单及无已确认接口的卡片见 `documentation/AI顾问卡片取数.md`。
+本文档是账户卡片组件、数据模式、接口映射、接口字段、数据状态和失败降级的统一归档入口，不定义完整响应骨架、内容顺序或页面编排。整体处理链路见 `documentation/AI顾问整体架构.md`，回复结构和卡片编排见 `documentation/AI顾问结果输出与组件编排.md`。
 
 当前账户域接口依据：
 
@@ -12,6 +12,113 @@
 - 接口归属：资产中心
 
 原始设计文档声明本次接口均为新接口。本文档保留原接口字段的 `camelCase` 命名，不擅自改名。
+
+## 通用卡片结构
+
+卡片只声明组件身份、数据提供方式和组件数据，不负责标题、解释文字或页面展示顺序。
+
+```json
+{
+  "cardId": "CARD-ID",
+  "dataMode": "deferred",
+  "data": {}
+}
+```
+
+| 字段 | 作用 |
+| --- | --- |
+| `cardId` | 卡片组件及其数据协议的唯一标识，并用于与 `section.cardId` 关联 |
+| `dataMode` | 数据提供方式；当前账户卡片固定为 `deferred` |
+| `data` | 传给卡片组件的数据载荷；当前账户卡片固定为空对象 |
+
+结构约束：
+
+- 卡片根级只保留 `cardId`、`dataMode` 和 `data`。
+- `type`、`chartType`、`title` 和 `dataQuery` 不属于当前卡片结构。
+- 标题、分析文字和展示顺序由 `sections[]` 管理。
+- 当前卡片信封中的 `data` 固定为空对象；组件加载、空数据和失败状态由前端组件内部处理，不作为编排条件。
+
+## Deferred 数据模式
+
+当前账户卡片统一由前端组件负责取数，所有卡片固定使用 `deferred`，`data` 必须为空对象：
+
+```json
+{
+  "cardId": "CARD-ID",
+  "dataMode": "deferred",
+  "data": {}
+}
+```
+
+最终响应不得在 deferred 卡片中携带 `data.request`、`dataQuery` 或身份参数。
+
+## 可用 MCP 工具
+
+当前账户域可使用以下 MCP 工具获取真实业务数据：
+
+| 序号 | 工具名 | 功能 |
+| --- | --- | --- |
+| 1 | `queryAssetsTotal` | 查询客户总资产 |
+| 2 | `queryAssetIndex` | 查询今日表现（账户管家） |
+| 3 | `queryAssetClassify` | 穿透查询资产分类分布，包括基金类型、大类资产、市场区域和行业风格 |
+| 4 | `queryHoldingDetail` | 查询持仓明细，支持按资产分类汇总或按基金穿透 |
+| 5 | `queryHoldingSignal` | 查询今日持仓提醒 |
+| 6 | `queryShareDetail` | 查询份额明细 |
+| 7 | `queryProfitAnalyze` | 查询收益分析 |
+| 8 | `queryProfitAnalyzeSum` | 查询收益总览 |
+| 9 | `queryProfitAttribution` | 查询收益归因，支持产品、类型和行业维度 |
+| 10 | `queryProfitCalendar` | 查询收益日历，支持日、月和年视角 |
+
+### MCP 的用途与边界
+
+- MCP 数据主要用于生成有真实数据依据的 `summary` 和 `conclusion`。
+- 账户卡片仍统一输出为 `deferred`，由前端组件自行取数；MCP 返回值不写入 `cards[].data`。
+- MCP 调用计划与卡片计划相互独立，不要求一张卡片对应一次 MCP 调用。
+- 不得因为选中某张卡片就自动调用其相关 MCP；只根据 `summary` 和 `conclusion` 的最小数据需求选择必要工具。
+- 业务 section 只说明 deferred 卡片将展示的内容，不使用未调用 MCP、未返回或无法验证的数据生成分析判断。
+- `summary` 和 `conclusion` 只能覆盖本次 MCP 实际返回且校验通过的数据，不得推断未查询的卡片内容。
+- MCP 调用失败或数据不足时，不得补造金额、收益率、趋势、归因或诊断结论。
+- 工具的请求参数、返回 Schema、鉴权及错误处理以实际 MCP 工具定义为准，本节只记录已知能力。
+
+## 取数边界
+
+- AI 负责识别意图、选择卡片、按需调用已批准的 MCP 工具并生成回复内容，不得生成 `custNo`、账户身份或业务数据。
+- `custNo`、`accountName` 等身份及账户上下文必须由可信系统或数据层注入。
+- `summary` 和 `conclusion` 中使用的金额、收益、净值、行情、持仓及归因数据必须来自本次真实 MCP 响应。
+- deferred 卡片展示的数据由前端组件调用真实数据源取得，与 MCP 摘要数据链相互独立。
+- 接口参数、鉴权和错误规则未明确的部分，在联调确认前不得自行假设。
+- 接口示例中的数值 `0` 和字符串 `"string"` 只表示字段类型，不是业务默认值。
+
+## 账户卡片清单
+
+| 意图大类 | 组件标识 | `cardId` | 卡片名称 | 资产中心接口记录 |
+| --- | --- | --- | --- | --- |
+| 资产总览 | `acc01-total-asset` | ACC-01 | 账户总资产 | `GET /v1/asset/agent/total` |
+| 资产总览 | `acc02-fund-account` | ACC-02 | 基金账户详情 | `GET /v1/asset/agent/total` |
+| 资产总览 | `acc03-fund-holding` | ACC-03 | 基金持有详情 | 未记录 |
+| 资产总览 | `acc19-fund-holding-summary` | ACC-19 | 产品份额明细 | `GET /v1/asset/agent/share-detail` |
+| 资产总览 | `acc04-advisor-account` | ACC-04 | 投顾账户详情 | `GET /v1/asset/agent/total` |
+| 资产总览 | `acc05-advisor-combo` | ACC-05 | 投顾组合详情 | 未记录 |
+| 资产总览 | `acc06-advisor-rebalance` | ACC-06 | 投顾调仓记录 | 未记录 |
+| 资产总览 | `acc07-money-account` | ACC-07 | 货币账户详情 | `GET /v1/asset/agent/total` |
+| 资产总览 | `acc08-money-holding` | ACC-08 | 货币持有详情 | 未记录 |
+| 资产总览 | `acc09-private-account` | ACC-09 | 专户账户详情 | `GET /v1/asset/agent/total` |
+| 资产总览 | `acc10-private-holding` | ACC-10 | 专户持有详情 | 未记录 |
+| 持仓结构 | `acc11-position-detail` | ACC-11 | 持仓明细 | `GET /v1/asset/agent/holding-detail` |
+| 持仓结构 | `acc12-asset-structure` | ACC-12 | 资产结构 | `GET /v1/asset/agent/list/classify` |
+| 收益表现 | `acc13a-return-overview` | ACC-13-A | 账户收益总览 | `GET /v1/asset/agent/analyze/profit/sum` 或 `/yield` |
+| 收益表现 | `acc13b-yearly-view` | ACC-13-B | 账户收益总览 · 分年视角 | `GET /v1/asset/agent/analyze/profit/yield` |
+| 收益表现 | `acc14-return-calendar` | ACC-14 | 收益明细日历 | `GET /v1/asset/agent/analyze/profit/calendar` |
+| 收益归因 | `acc15-return-attribution` | ACC-15 | 收益归因 | `GET /v1/asset/agent/analyze/attribution` |
+| 自选基金估值 | `acc18-watchlist-valuation` | ACC-18 | 自选基金估值卡 | 未记录 |
+
+补充约束：
+
+- ACC-16、ACC-17 不在当前卡片清单中，不得生成。
+- `GET /v1/asset/agent/index`（账户管家）和 `GET /v1/asset/agent/holding-signal`（今日提醒）暂无对应卡片编号。
+- `/holding-detail` 只对应 ACC-11，不得替代 ACC-03、ACC-05、ACC-08 或 ACC-10。
+- `/share-detail` 只对应 ACC-19，不得替代其他单产品持有详情卡片。
+- “未记录”只表示当前资产中心设计文档没有记录对应接口，不表示卡片不可编排。卡片选择和回复编排不以接口记录或数据状态为前置条件。
 
 ## 公共请求参数
 
@@ -198,7 +305,7 @@
 
 ## 数据状态
 
-`dataMode` 与数据状态相互独立。项目统一状态如下：
+以下状态用于资产接口响应及前端组件内部的数据处理，不写入当前 deferred 卡片的空 `data`。项目统一状态如下：
 
 | 状态 | 含义 |
 | --- | --- |

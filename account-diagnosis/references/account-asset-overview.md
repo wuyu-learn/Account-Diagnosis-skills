@@ -1,11 +1,11 @@
 ---
 name: account-asset-overview
-description: "将 account_overview 账户意图映射为账户总资产、账户详情和产品份额明细卡片，并阻止无接口的持有详情或调仓卡片生成取数请求。Account Intent Router 输出资产总览诉求，需要生成账户卡片取数计划时使用。"
+description: "将 account_overview 账户意图精确映射为账户总资产、账户详情、持有详情、组合调仓或产品份额卡片。Account Intent Router 输出资产总览诉求，需要生成 deferred 账户卡片计划时使用。"
 ---
 
 # Account Asset Overview
 
-作为账户域 Account Step 2（卡片选择与取数计划），只处理 `intent = "account_overview"` 的单条路由记录。按本文件规则选择卡片，不生成或猜测账户数据。
+作为账户域 Account Step 2（卡片选择与计划归一化），只处理 `intent = "account_overview"` 的单条路由记录。按本文件规则选择卡片，不获取、生成或猜测账户数据。
 
 ## 输入
 
@@ -45,9 +45,9 @@ description: "将 account_overview 账户意图映射为账户总资产、账户
 6. 专户账户整体进入 ACC-09；单个专户产品下钻进入 ACC-10。
 7. 一个 `subQuery` 同时明确命中多个卡片时，按诉求先后输出对应卡片。
 8. 无法确定具体账户类型时输出 ACC-01。
-9. 可取数卡片固定输出 `dataMode: "deferred"` 且 `data` 为空对象；取数写在前端组件里，本模块不生成 `data.request`。
+9. 所有卡片固定输出 `dataMode: "deferred"` 且 `data` 为空对象；取数写在前端组件里，本模块不生成 `data.request`。
 10. `subQuery` 未指定具体产品时不得输出 ACC-19；诉求实为账户整体情况时改输出对应账户详情卡。
-11. ACC-03、ACC-05、ACC-06、ACC-08、ACC-10 当前没有可用接口。命中时输出结构化 `unsupported_card` 错误并停止，不得生成 `data.request`，不得用 `/holding-detail` 或 `/share-detail` 替代。
+11. 不检查卡片是否已有接口记录或数据，不得因数据能力改变目标卡片。
 12. 不得生成具体资产、收益、份额或调仓记录。
 13. 只输出合法 JSON，不添加解释文字。
 
@@ -83,14 +83,18 @@ ACC-19 输出：
 }
 ```
 
-无接口卡片输出：
+ACC-03 输出：
 
 ```json
 {
-  "error": {
-    "code": "unsupported_card",
-    "cardId": "ACC-03",
-    "message": "当前没有可用于基金持有详情的已确认接口"
-  }
+  "intent": "account_overview",
+  "subQuery": "我持有的这只基金怎么样",
+  "cards": [
+    {
+      "cardId": "ACC-03",
+      "dataMode": "deferred",
+      "data": {}
+    }
+  ]
 }
 ```

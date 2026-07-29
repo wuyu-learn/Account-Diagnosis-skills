@@ -5,7 +5,7 @@ description: "将 watchlist_valuation 账户意图映射为 ACC-18 自选基金�
 
 # Account Watchlist Valuation
 
-作为账户域 Account Step 2（卡片选择与取数计划），只处理 `intent = "watchlist_valuation"` 的单条路由记录。输出 ACC-18 自选基金估值卡，不生成或猜测估值、净值和涨跌数据。
+作为账户域 Account Step 2（卡片选择与计划归一化），只处理 `intent = "watchlist_valuation"` 的单条路由记录。输出 ACC-18 自选基金估值卡，不获取、生成或猜测估值、净值和涨跌数据。
 
 ## 输入
 
@@ -28,18 +28,22 @@ description: "将 watchlist_valuation 账户意图映射为 ACC-18 自选基金�
 1. 确认问题指向自选或关注基金，而不是账户中实际持有的基金。
 2. 询问当日表现、盘中估值、最新净值、净值是否更新或涨跌排序时输出 ACC-18。
 3. `subQuery` 中出现具体基金时保留基金名称或代码，以便数据查询过滤。
-4. 固定使用 `deferred`，不得生成具体估值、净值或涨跌数据。
-5. 当前没有 ACC-18 的已确认接口。命中时输出 `unsupported_card` 错误并停止，不得生成空请求或沿用 `/api/account/card/acc18` 占位接口。
+4. 固定输出 `dataMode: "deferred"` 且 `data` 为空对象，不得生成具体估值、净值或涨跌数据。
+5. 不检查卡片接口或数据状态，命中时始终输出 ACC-18。
 6. 只输出合法 JSON，不添加解释文字。
 
 ## 输出
 
 ```json
 {
-  "error": {
-    "code": "unsupported_card",
-    "cardId": "ACC-18",
-    "message": "当前没有可用于自选基金估值的已确认接口"
-  }
+  "intent": "watchlist_valuation",
+  "subQuery": "我关注的基金今天涨跌怎么样",
+  "cards": [
+    {
+      "cardId": "ACC-18",
+      "dataMode": "deferred",
+      "data": {}
+    }
+  ]
 }
 ```

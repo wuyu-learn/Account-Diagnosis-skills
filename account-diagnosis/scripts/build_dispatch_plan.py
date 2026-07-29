@@ -24,6 +24,15 @@ ALLOWED_ROUTER_KEYS = {
     "isMultiAccountIntent",
 }
 
+ALLOWED_ENTITY_KEYS = (
+    "fund_names",
+    "fund_codes",
+    "manager_names",
+    "company_names",
+    "market_subjects",
+    "strategy_names",
+)
+
 
 class DispatchError(ValueError):
     """Raised when the account routing result violates its contract."""
@@ -41,13 +50,32 @@ def require_string(value: Any, path: str) -> str:
     return value
 
 
+def normalize_entities(value: Any) -> dict[str, list[Any]]:
+    entities = require_object(value, "entities")
+    normalized: dict[str, list[Any]] = {}
+    for key in ALLOWED_ENTITY_KEYS:
+        if key not in entities:
+            continue
+        entity_values = entities[key]
+        if not isinstance(entity_values, list):
+            raise DispatchError(f"entities.{key} must be an array")
+        normalized[key] = [
+            require_string(item, f"entities.{key}[{index}]")
+            for index, item in enumerate(entity_values)
+        ]
+    return normalized
+
+
 def build_dispatch_plan(payload: Any) -> dict[str, Any]:
     root = require_object(payload, "input")
+    unexpected_root_keys = sorted(set(root) - {"accountIntentResult", "entities"})
+    if unexpected_root_keys:
+        raise DispatchError(
+            "input has unsupported fields: " + ", ".join(unexpected_root_keys)
+        )
+
     router = require_object(root.get("accountIntentResult"), "accountIntentResult")
-    entities = require_object(root.get("entities", {}), "entities")
-    request_context = require_object(
-        root.get("requestContext", {}), "requestContext"
-    )
+    entities = normalize_entities(root.get("entities", {}))
 
     unexpected = sorted(set(router) - ALLOWED_ROUTER_KEYS)
     if unexpected:
@@ -102,7 +130,6 @@ def build_dispatch_plan(payload: Any) -> dict[str, Any]:
                     "intent": intent,
                     "subQuery": sub_query,
                     "entities": entities,
-                    "requestContext": request_context,
                 },
             }
         )

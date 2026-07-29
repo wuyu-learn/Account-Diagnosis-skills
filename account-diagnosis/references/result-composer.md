@@ -1,157 +1,162 @@
 ---
 name: result-composer
-description: "调度 AI 顾问最终结果编排：理解已完成取数的卡片结果，生成有数据依据的 section 文案，并调用 compose_result.py 拼接和校验统一响应 JSON。上游已经完成场景路由、意图路由、选卡与取数，需要输出最终页面结果时使用。"
+description: "将账户意图、deferred 卡片计划和 MCP 摘要证据编排为账户域局部 JSON，并调用 compose_result.py 完成确定性校验。"
 ---
 
 # Result Composer
 
-作为 AI 顾问流水线的最终编排阶段。不要重新分类意图、重新选择卡片或补造业务数据。
+作为 Global Phase B 问账户流水线的局部编排模块。不要重新分类意图、重新选择卡片、调用额外 MCP 或补造业务数据。
 
-职责分工：
+职责：
 
-- `SKILL.md`：理解真实卡片数据，生成 section 标题、摘要、结论和追问，并调度脚本。
-- `scripts/compose_result.py`：确定性拼接 `sections` 与 `cards`，补齐顶层结构并校验协议。
+- LLM 基于 MCP 证据生成 Summary 和 Conclusion，为 deferred 卡片生成中性业务 Section。
+- `scripts/compose_result.py` 校验 Section、卡片和账户域协议，并输出局部 JSON。
+- Global Phase C 合并各业务域结果，添加 `version`、最终 `meta` 和 `risk_warning`。
 
-## 运行位置
+## 标准模板
 
 ```text
-场景路由
-→ 业务意图路由
-→ 选择卡片并生成取数计划
-→ 获取卡片数据
-→ Result Composer
-→ 前端渲染
+summary
+→ account_overview
+→ holding_structure
+→ return_performance
+→ return_attribution
+→ watchlist_valuation
+→ conclusion
 ```
 
-优先在实际数据已经返回后运行。只有取数请求而没有数据结果时，不得生成具体数值、趋势或判断。
+只输出实际命中的业务 Section。自选基金可以和其他账户意图出现在同一账户域结果中。
 
-## 输入
+| `section.type` | 作用 | 卡片 |
+| --- | --- | --- |
+| `summary` | 使用 MCP 数据直接回答用户 | 不关联卡片 |
+| `account_overview` | 账户、组合或产品概况 | ACC-01～ACC-10、ACC-19 |
+| `holding_structure` | 持仓和资产结构 | ACC-11、ACC-12 |
+| `return_performance` | 收益总览、分年和日历 | ACC-13-A、ACC-13-B、ACC-14 |
+| `return_attribution` | 收益贡献和拖累 | ACC-15 |
+| `watchlist_valuation` | 自选基金估值 | ACC-18 |
+| `conclusion` | 使用 MCP 数据收束回答 | 不关联卡片 |
 
-接收上游路由结果、卡片结果和合规提示。将其转换为脚本需要的中间 JSON：
+同一业务类型命中多张卡片时，每张卡片生成一个 Section，并保持卡片计划原始顺序。
+
+## 脚本输入
 
 ```json
 {
-  "version": "2.2",
-  "meta": {
-    "scene": "问账户",
-    "intent": "return_performance"
-  },
+  "scene": "问账户",
+  "primaryAccountIntent": "return_performance",
   "items": [
     {
       "section": {
-        "type": "performance",
-        "title": "收益表现",
-        "narrative": "根据真实数据生成的结果摘要。"
+        "type": "summary",
+        "title": "今年收益概况",
+        "narrative": "根据 MCP 真实数据生成的直接回答。"
+      }
+    },
+    {
+      "section": {
+        "type": "return_performance",
+        "title": "账户收益表现",
+        "narrative": "下方卡片展示账户收益总览。"
       },
       "card": {
-        "cardId": "ACC-13-B",
-        "dataMode": "inline",
-        "data": {
-          "status": "available"
-        }
+        "cardId": "ACC-13-A",
+        "dataMode": "deferred",
+        "data": {}
+      }
+    },
+    {
+      "section": {
+        "type": "conclusion",
+        "title": "综合结论",
+        "narrative": "根据同一批 MCP 真实数据生成的收束。"
       }
     }
   ],
-  "risk_warning": "投资有风险，请结合自身情况审慎决策。",
   "followUp": []
 }
 ```
 
-输入约束：
+## 文案规则
 
-- 原样保留上游确定的 `meta`，不要修改场景或意图。
-- 按预期展示顺序生成 `items[]`。
-- 每个 item 必须包含一个 `section`，并可以包含一张 `card`。
+### Summary
+
+- 必须是第一个 Section，且一次账户域结果只有一个。
+- 直接回答用户，只使用本次可验证的 MCP 证据。
+- 不关联卡片，不概括未查询的数据。
+
+### 业务 Section
+
+- 每张卡片对应一个业务 Section。
+- `type` 必须与卡片所属意图一致。
+- `title` 准确描述卡片内容。
+- `narrative` 只说明 deferred 卡片将展示什么，不生成具体数值或判断。
+- `section.cardId` 由脚本根据同一 item 的卡片补齐。
+
+### Conclusion
+
+- 必须是最后一个 Section，且一次账户域结果只有一个。
+- 原则上复用 Summary 的 MCP 证据，不重复摘要或增加新事实。
+- 不关联卡片。
+
+MCP 失败、无数据或缺少可信运行时上下文时，Summary 只说明无法取得核心数据，Conclusion 只说明暂不作判断；业务卡片仍正常编排。
+
+## 卡片规则
+
+```json
+{
+  "cardId": "ACC-18",
+  "dataMode": "deferred",
+  "data": {}
+}
+```
+
+- 所有账户卡片固定为 `deferred`，`data` 固定为空对象。
 - 卡片只保留 `cardId`、`dataMode` 和 `data`。
-- deferred 卡片的 `data` 必须为空对象；取数由前端组件完成，不得携带 `data.request` 等取数字段。
-- 使用上游或场景合规规则提供的 `risk_warning`，不要自行编造合规文案。
+- 不输出 `inline`、`type`、`chartType`、`title`、`dataQuery` 或 `data.request`。
+- 不根据接口或数据状态删除卡片。
+- 同一个 `cardId` 在一次账户域结果中只能出现一次。
 
 ## 工作流
 
-1. 校验上游是否提供 `version`、`meta`、卡片结果和 `risk_warning`。
-2. 根据每项真实数据生成 `section.title` 和 `section.narrative`。
-3. 只陈述输入数据能够支持的事实，不复制完整卡片数据。
-4. 将卡片规范化为 `cardId`、`dataMode` 和 `data`。
-5. 按展示顺序构造 `items[]`。
-6. 生成或筛选不超过 3 条 `followUp`，不得重复当前问题。
-7. 将中间 JSON 传给 `scripts/compose_result.py`。
-8. 脚本失败时根据错误修正中间 JSON 并重新执行，不要绕过校验手工拼接。
-9. 将脚本标准输出作为最终结果，只输出合法 JSON。
-
-执行方式：
+1. 校验 `primaryAccountIntent`、卡片计划和 MCP 结果。
+2. 基于 MCP 证据生成一个 Summary。
+3. 按固定业务顺序整理卡片；同类型内部保持原始顺序。
+4. 为每张卡片生成中性业务 Section。
+5. 基于同一批 MCP 证据生成一个 Conclusion。
+6. 生成或筛选不超过 3 条、不重复当前问题的 `followUp`。
+7. 调用：
 
 ```bash
 python3 scripts/compose_result.py --input normalized-input.json
 ```
 
-也可以通过标准输入传入 JSON：
-
-```bash
-python3 scripts/compose_result.py < normalized-input.json
-```
-
-## Sections
-
-```json
-{
-  "type": "performance",
-  "title": "收益表现",
-  "narrative": "今年以来账户收益为……"
-}
-```
-
-- 使用 `title` 和 `narrative`，不要使用 `content`。
-- 脚本会根据同一 item 中的 `card.cardId` 自动补齐 `section.cardId`。
-- 没有卡片的概要或结论 section 可以省略 `cardId`。
-- 不要生成“已为您整理”等没有结果信息的占位摘要。
-- `zero` 表示真实值为零，不得解释为无数据。
-- `empty` 表示当前范围内没有数据。
-- `unavailable` 表示暂时无法获取，不得推断趋势或结论。
-- 数据仍为 `deferred` 请求时，只说明正在获取，不生成结果判断。
-
-## Cards
-
-```json
-{
-  "cardId": "ACC-13-B",
-  "dataMode": "inline",
-  "data": {}
-}
-```
-
-- 保持 `cardId` 与上游一致。
-- `inline` 卡片将实际组件数据放入 `data`；deferred 卡片的 `data` 为空对象。
-- 不输出根级 `type`、`chartType`、`title` 或 `dataQuery`。
-- 不把缺失值改写为 `0`，不生成示例数据填充空字段。
-- 同一个 `cardId` 在一次响应中只能出现一次。
+8. 脚本失败时修正输入并重试，不得绕过校验手工拼接。
+9. 只输出脚本生成的合法 JSON。
 
 ## 脚本校验
 
 `scripts/compose_result.py` 负责：
 
-- 校验 `version`、`meta`、`items` 和 `risk_warning`。
-- 拒绝 section 中未定义的 `content`。
-- 拒绝 card 根级的额外字段。
-- 校验 `dataMode` 只能为 `inline` 或 `deferred`。
-- 校验 `deferred` 卡片的 `data` 为空对象，拒绝携带 `data.request` 等取数字段。
+- 要求 `scene = "问账户"` 和合法的 `primaryAccountIntent`。
+- 要求 Summary 唯一且位于第一项，Conclusion 唯一且位于最后一项。
+- 校验业务 Section 固定顺序。
+- 校验全部卡片为 deferred 且 `data` 为空对象。
+- 校验全部 18 张合法卡片及其 Section 类型映射。
 - 自动关联 `section.cardId` 与 `card.cardId`。
-- 拒绝重复或相互冲突的 `cardId`。
-- 保持 `items[]` 的展示顺序。
+- 拒绝重复 cardId、悬空引用、多余字段和最终响应字段。
 - 对 `followUp` 去重并最多保留 3 条。
 
-## 输出
-
-脚本输出完整响应：
+## 账户域局部输出
 
 ```json
 {
-  "version": "2.2",
-  "meta": {},
+  "scene": "问账户",
+  "primaryAccountIntent": "return_performance",
   "sections": [],
   "cards": [],
-  "risk_warning": "",
   "followUp": []
 }
 ```
 
-必须包含全部六个顶层字段。不要输出顶层 `text` 或 `conclusion`；结论作为 `sections[]` 中的内容区块。
+必须包含全部五个顶层字段。不得输出 `version`、`meta`、`risk_warning`、顶层 `text` 或顶层 `conclusion`。

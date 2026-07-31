@@ -78,7 +78,7 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 
 ## 内部证据
 
-内部保存 MCP 计划和结果，不写入账户域局部 JSON：
+内部保存 MCP 计划和结果，不写入最终 v2.2 JSON 的 `cards[].data`：
 
 ```json
 {

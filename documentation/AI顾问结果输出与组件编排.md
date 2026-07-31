@@ -30,7 +30,7 @@
 
 - `meta.scene` 和 `meta.intent` 决定响应骨架。
 - 问账户响应的 `meta.scene` 固定为“问账户”，`meta.intent` 使用账户意图识别结果中的 `primaryAccountIntent`。
-- 复合账户问题的其他意图通过对应业务 section 的 `type` 表达，不额外修改顶层结构。
+- 同一账户回答大类内的复合问题，其他意图通过对应业务 section 的 `type` 表达，不额外修改顶层结构；跨大类意图不混排在同一结果中。
 - `sections[]` 和 `cards[]` 是前端消费的主要内容。
 - `risk_warning` 必须为上游合规规则提供的非空字符串，并展示在回答末尾。
 - `followUp` 可以为空数组。
@@ -68,7 +68,12 @@ section.title
 
 ## 账户回答类型
 
-“问账户”包含两类相对独立的回答：账户诊断类和自选基金类。两类回答共用 `summary` 和 `conclusion` 作为开头与结尾，中间使用各自的业务 section。
+“问账户”分为两个账户回答大类：
+
+- **账户诊断类**：资产总览、持仓结构、收益表现、收益归因，对应 ACC-01～ACC-15。
+- **自选基金类**：自选基金估值，对应 ACC-18。
+
+一次账户域结果只属于其中一个大类，由本次问账户分发的 `primaryAccountIntent` 所在大类决定，用一对 `summary` 和 `conclusion` 包裹该大类命中的业务 section。同一大类内的多个意图按固定业务顺序混排；当一次问账户分发同时包含两个大类的意图时，账户域只处理 `primaryAccountIntent` 所在大类，丢弃另一大类，不为被丢弃的大类生成 section 或卡片。
 
 ### 账户诊断类
 
@@ -141,7 +146,7 @@ summary
 → conclusion
 ```
 
-复合问题命中多张卡片时，只生成一个公共 `summary` 和一个公共 `conclusion`，中间按业务顺序放入各卡片对应的业务 section：
+同一账户回答大类内的复合问题命中多张卡片时，只生成一个公共 `summary` 和一个公共 `conclusion`，中间按业务顺序放入各卡片对应的业务 section：
 
 ```text
 summary
@@ -212,6 +217,8 @@ summary
 
 用户询问自选或关注基金的当日估值、涨跌或净值更新情况时，精确选择 ACC-18，并生成一个 `watchlist_valuation` section 和 deferred 卡片。是否已有接口或数据不影响该卡片进入编排。
 
+自选基金类结果是否生成，取决于本次问账户分发的 `primaryAccountIntent` 是否属于自选基金类；当 primary 意图属于账户诊断类时，自选意图被丢弃，不生成自选类 section。
+
 ### MCP 驱动的 Summary 与 Conclusion
 
 卡片计划和 MCP 数据计划相互独立：
@@ -261,7 +268,7 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 - `summary` 直接回应用户问题，优先表达最重要的一至三个事实。
 - `summary` 中的金额、收益率、持仓、行情、归因和诊断判断必须来自本次实际 MCP 响应。
 - 只调用形成核心回答所必需的 MCP，不为了覆盖所有已选卡片扩大调用范围。
-- 复合问题只生成一个公共 `summary`，可以综合多个 MCP 的已确认结果。
+- 同一账户回答大类内的复合问题只生成一个公共 `summary`，可以综合多个 MCP 的已确认结果。
 - 不得在 `summary` 中概括未调用 MCP 的卡片内容。
 
 #### Conclusion 生成规则

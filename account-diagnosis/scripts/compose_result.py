@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compose normalized result items into an account-domain result JSON."""
+"""Compose normalized result items into the final v2.2 account response JSON."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ from typing import Any, TextIO
 
 
 SCENE = "问账户"
+VERSION = "2.2"
+# 当前没有独立 Global Phase C / 合规来源，由脚本在输出阶段注入固定默认值，
+# 保证最终 v2.2 响应始终携带非空风险提示；接入真实合规来源后在此替换。
+DEFAULT_RISK_WARNING = "投资有风险，请结合自身情况审慎决策。"
 
 ACCOUNT_INTENTS = {
     "account_overview",
@@ -50,6 +54,26 @@ CARD_TO_SECTION = {
     "ACC-18": "watchlist_valuation",
     "ACC-19": "account_overview",
 }
+
+# Per-request 业务参数：cardId → 允许出现在 card.data 里的键。
+# 不在表中的卡片（默认卡）data 必须为空对象。
+CARD_DATA_PARAMS: dict[str, frozenset[str]] = {
+    "ACC-15": frozenset({"dateType"}),
+    "ACC-19": frozenset({"productId"}),
+    "ACC-03": frozenset({"serialNo", "uri"}),
+    "ACC-05": frozenset({"serialNo", "uri"}),
+    "ACC-06": frozenset({"serialNo", "uri"}),
+    "ACC-08": frozenset({"serialNo", "uri"}),
+    "ACC-10": frozenset({"serialNo", "uri"}),
+}
+
+# 必须存在的业务参数（当前仅 ACC-15 的 dateType：由意图解析生成，未明确时兜底 N）。
+CARD_REQUIRED_DATA_PARAMS: dict[str, frozenset[str]] = {
+    "ACC-15": frozenset({"dateType"}),
+}
+
+# 身份参数禁止出现在任何卡的 data 中（由可信运行时注入）。
+IDENTITY_KEYS = frozenset({"custNo", "accountName"})
 
 
 class CompositionError(ValueError):
@@ -110,10 +134,28 @@ def normalize_card(value: Any, index: int) -> dict[str, Any]:
         )
 
     data = require_object(card.get("data"), f"items[{index}].card.data")
-    if data:
+    allowed_params = CARD_DATA_PARAMS.get(card_id, frozenset())
+    required_params = CARD_REQUIRED_DATA_PARAMS.get(card_id, frozenset())
+    for key in data:
+        if key in IDENTITY_KEYS:
+            raise CompositionError(
+                f"items[{index}].card.data must not carry identity param '{key}'"
+            )
+        if key not in allowed_params:
+            if allowed_params:
+                raise CompositionError(
+                    f"items[{index}].card.data for {card_id} only allows "
+                    f"{sorted(allowed_params)}, got '{key}'"
+                )
+            raise CompositionError(
+                f"items[{index}].card.data for {card_id} must be empty; "
+                "business params are carried by the frontend component"
+            )
+    missing = sorted(set(required_params) - set(data))
+    if missing:
         raise CompositionError(
-            f"items[{index}].card.data must be empty; "
-            "fetching is handled by the frontend component"
+            f"items[{index}].card.data for {card_id} is missing required "
+            f"param(s): {', '.join(missing)}"
         )
 
     return {"cardId": card_id, "dataMode": data_mode, "data": data}
@@ -264,10 +306,11 @@ def compose_result(payload: Any) -> dict[str, Any]:
         )
 
     return {
-        "scene": SCENE,
-        "primaryAccountIntent": intent,
+        "version": VERSION,
+        "meta": {"scene": SCENE, "intent": intent},
         "sections": sections,
         "cards": cards,
+        "risk_warning": DEFAULT_RISK_WARNING,
         "followUp": follow_up,
     }
 

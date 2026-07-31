@@ -1,17 +1,17 @@
 ---
 name: result-composer
-description: "将账户意图、deferred 卡片计划和 MCP 摘要证据编排为账户域局部 JSON，并调用 compose_result.py 完成确定性校验。"
+description: "将账户意图、deferred 卡片计划和 MCP 摘要证据编排为账户域最终 v2.2 JSON，并调用 compose_result.py 完成确定性校验。"
 ---
 
 # Result Composer
 
-作为 Global Phase B 问账户流水线的局部编排模块。不要重新分类意图、重新选择卡片、调用额外 MCP 或补造业务数据。
+作为 Global Phase B 问账户流水线的账户域编排模块。不要重新分类意图、重新选择卡片、调用额外 MCP 或补造业务数据。
 
 职责：
 
 - LLM 基于 MCP 证据生成 Summary 和 Conclusion，为 deferred 卡片生成中性业务 Section。
-- `scripts/compose_result.py` 校验 Section、卡片和账户域协议，并输出局部 JSON。
-- Global Phase C 合并各业务域结果，添加 `version`、最终 `meta` 和 `risk_warning`。
+- `scripts/compose_result.py` 校验 Section、卡片和账户域协议，并输出最终 v2.2 JSON。
+- 当前没有独立 Global Phase C，`version`、`meta` 和 `risk_warning` 由 `compose_result.py` 在输出阶段补齐；账户域仍不负责跨业务域聚合。
 
 ## 标准模板
 
@@ -111,11 +111,24 @@ MCP 失败、无数据或缺少可信运行时上下文时，Summary 只说明�
 }
 ```
 
-- 所有账户卡片固定为 `deferred`，`data` 固定为空对象。
+- 所有账户卡片固定为 `deferred`。`data` 默认为空对象；只有需要 per-request 业务入参的卡片才在 `data` 中平铺业务参数。
 - 卡片只保留 `cardId`、`dataMode` 和 `data`。
-- 不输出 `inline`、`type`、`chartType`、`title`、`dataQuery` 或 `data.request`。
+- `data` 不得携带 `custNo`、`accountName` 等身份参数（由可信运行时注入）；不使用 `dataQuery`、`data.request` 等外层。
+- 不输出 `inline`、`type`、`chartType`、`title`。
 - 不根据接口或数据状态删除卡片。
 - 同一个 `cardId` 在一次账户域结果中只能出现一次。
+
+### per-request 业务入参
+
+需要按意图/上下文在 `data` 中平铺业务参数的卡片：
+
+| 卡片 | `data` 参数 | 是否必填 |
+| --- | --- | --- |
+| ACC-15 收益归因 | `dateType` | 必填（按意图解析，未明确兜底 `N`；见 `references/account-return-attribution.md`） |
+| ACC-19 份额明细 | `productId` | 允许 |
+| ACC-03 / ACC-05 / ACC-06 / ACC-08 / ACC-10 | `serialNo`、`uri` | 允许 |
+
+其余卡片 `data` 保持为空对象。脚本按 cardId 白名单校验 `data` 的键，拒绝身份参数；ACC-15 缺 `dateType` 会被拒绝。
 
 ## 工作流
 
@@ -141,22 +154,27 @@ python3 scripts/compose_result.py --input normalized-input.json
 - 要求 `scene = "问账户"` 和合法的 `primaryAccountIntent`。
 - 要求 Summary 唯一且位于第一项，Conclusion 唯一且位于最后一项。
 - 校验业务 Section 固定顺序。
-- 校验全部卡片为 deferred 且 `data` 为空对象。
+- 校验全部卡片为 deferred；`data` 按 cardId 白名单校验（默认卡必须为空，per-request 卡只允许指定业务参数），拒绝身份参数，且 ACC-15 的 `dateType` 必填。
 - 校验全部 18 张合法卡片及其 Section 类型映射。
 - 自动关联 `section.cardId` 与 `card.cardId`。
-- 拒绝重复 cardId、悬空引用、多余字段和最终响应字段。
+- 拒绝输入中的重复 cardId、悬空引用和多余字段（含 version、meta、risk_warning 等最终响应字段，它们由脚本在输出阶段补齐）。
 - 对 `followUp` 去重并最多保留 3 条。
+- 输出阶段补齐 `version`、`meta`（`scene` 固定为“问账户”，`intent` 取自 `primaryAccountIntent`）和代码默认 `risk_warning`。
 
-## 账户域局部输出
+## 最终 v2.2 输出
 
 ```json
 {
-  "scene": "问账户",
-  "primaryAccountIntent": "return_performance",
+  "version": "2.2",
+  "meta": {
+    "scene": "问账户",
+    "intent": "return_performance"
+  },
   "sections": [],
   "cards": [],
+  "risk_warning": "投资有风险，请结合自身情况审慎决策。",
   "followUp": []
 }
 ```
 
-必须包含全部五个顶层字段。不得输出 `version`、`meta`、`risk_warning`、顶层 `text` 或顶层 `conclusion`。
+必须包含全部六个顶层字段：`version`、`meta`、`sections`、`cards`、`risk_warning`、`followUp`。`meta.scene` 固定为“问账户”，`meta.intent` 取自输入的 `primaryAccountIntent`；`risk_warning` 为代码注入的固定默认值，待合规来源接入后替换。不得输出顶层 `text` 或顶层 `conclusion`。

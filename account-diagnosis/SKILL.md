@@ -1,11 +1,11 @@
 ---
 name: account-diagnosis
-description: "处理主 Agent 分发的问账户任务：从固定会话文本中读取完整 Route Extract JSON，识别账户二级意图，精确选择 deferred 账户卡片，按最小数据需求调用账户 MCP 生成 Summary 和 Conclusion，并输出供 Global Phase C 聚合的账户域局部 JSON。分发目标为账户，或完整路由中包含 scene = 问账户时使用。"
+description: "处理主 Agent 分发的问账户任务：从固定会话文本中读取完整 Route Extract JSON，识别账户二级意图，精确选择 deferred 账户卡片，按最小数据需求调用账户 MCP 生成 Summary 和 Conclusion，并直接输出账户域的最终 v2.2 JSON（含 version、meta、risk_warning）。分发目标为账户，或完整路由中包含 scene = 问账户时使用。"
 ---
 
 # Account Diagnosis
 
-作为 Global Phase B 的“问账户”业务域入口。只生成账户域局部结果，不负责跨业务域聚合、最终 v2.2 封装或风险提示。
+作为 Global Phase B 的“问账户”业务域入口。当前没有独立 Global Phase C 封装组件，账户域直接输出最终 v2.2 JSON（含 version、meta、risk_warning），但仍不负责跨业务域聚合。
 
 Skill 独立部署并自包含，只使用本目录中的 `SKILL.md`、`references/`、`scripts/` 和 `agents/`，不得依赖目录外文件。
 
@@ -19,9 +19,9 @@ references/account-return-performance.md  收益表现选卡
 references/account-return-attribution.md  收益归因选卡
 references/account-watchlist-valuation.md 自选基金选卡
 references/mcp-summary-conclusion.md       MCP 摘要证据
-references/result-composer.md              局部结果编排
+references/result-composer.md              最终结果编排
 scripts/build_dispatch_plan.py             模块调度校验
-scripts/compose_result.py                   局部结果校验
+scripts/compose_result.py                   最终结果校验
 ```
 
 按步骤完整读取被引用的文件。`references/` 文件不是独立 Skill。
@@ -72,7 +72,7 @@ scripts/compose_result.py                   局部结果校验
 
 - 身份、会话和鉴权只能来自可信运行时或 MCP 连接，不得从用户文本或业务实体推断。
 - 运行时未提供 MCP 所需可信上下文时，不猜测参数，按数据降级继续编排卡片。
-- `risk_warning`、最终 `version` 和最终 `meta` 由 Global Phase C 添加。
+- 最终响应的 `version`、`meta` 和 `risk_warning` 由 `compose_result.py` 在输出阶段补齐（当前无独立 Phase C）。
 - 标准账户域输出不包含调试数据、MCP 原始结果或身份信息。
 
 ## 工作流
@@ -155,7 +155,7 @@ watchlist_valuation   → references/account-watchlist-valuation.md
 - 合法卡片为 ACC-01～ACC-12、ACC-13-A、ACC-13-B、ACC-14、ACC-15、ACC-18、ACC-19，共 18 张。
 - ACC-16、ACC-17 不得生成。
 - 卡片只保留 `cardId`、`dataMode` 和 `data`。
-- `data` 必须为空对象；不输出 `inline`、`data.request`、`dataQuery`、接口参数或组件数据。
+- `data` 默认为空对象；只有需要 per-request 业务入参的卡片才在 `data` 中平铺业务参数（ACC-15 必填 `dateType`，ACC-19 可填 `productId`，ACC-03/05/06/08/10 可填 `serialNo`+`uri`）；`data` 不得携带 `custNo`、`accountName` 等身份参数。不输出 `inline`、`dataQuery` 或组件数据。
 - 不因卡片没有接口记录或当前无数据而停止编排。
 
 ### 5. 规划 MCP 摘要数据
@@ -173,7 +173,7 @@ MCP 计划  → 为 Summary 和 Conclusion 提供最少必要的真实数据
 4. MCP 数据只用于 Summary 和 Conclusion，不写入卡片 `data`。
 5. MCP 失败、无数据、缺少可信上下文或无法校验时，不生成数据判断，但继续输出 deferred 卡片。
 
-### 6. 编排账户域局部结果
+### 6. 编排账户域最终结果
 
 完整读取 `references/result-composer.md`，按固定业务顺序构造编排项：
 
@@ -212,19 +212,23 @@ python3 scripts/compose_result.py --input normalized-input.json
 }
 ```
 
-脚本只输出账户域局部 JSON：
+脚本输出最终 v2.2 JSON：
 
 ```json
 {
-  "scene": "问账户",
-  "primaryAccountIntent": "holding_structure",
+  "version": "2.2",
+  "meta": {
+    "scene": "问账户",
+    "intent": "holding_structure"
+  },
   "sections": [],
   "cards": [],
+  "risk_warning": "投资有风险，请结合自身情况审慎决策。",
   "followUp": []
 }
 ```
 
-不得输出 `version`、`meta`、`risk_warning`、Route Extract 原文、MCP 计划或 MCP 原始结果。Global Phase C 负责合并各业务域结果、添加风险提示并生成最终 v2.2 JSON。
+`compose_result.py` 在输出阶段补齐 `version`、`meta`（`scene` 固定为“问账户”，`intent` 取自 `primaryAccountIntent`）和 `risk_warning`（代码注入的固定默认值，待合规来源接入后替换）。不得输出 Route Extract 原文、MCP 计划或 MCP 原始结果。账户域仍不负责跨业务域聚合。
 
 ## 失败与降级
 
@@ -237,7 +241,7 @@ python3 scripts/compose_result.py --input normalized-input.json
 - cardId 重复、越界或与 Section 类型不匹配。
 - 卡片不是 deferred，或 `data` 不是空对象。
 - Summary/Conclusion 缺失、重复或顺序错误。
-- 局部结果校验脚本失败。
+- 结果校验脚本失败。
 
 以下数据问题不得删除卡片或停止卡片编排：
 
@@ -253,4 +257,4 @@ python3 scripts/compose_result.py --input normalized-input.json
 
 ## 输出约束
 
-成功时只输出 `scripts/compose_result.py` 生成的账户域局部 JSON。不要添加 Markdown 代码围栏、解释文字或调试信息。
+成功时只输出 `scripts/compose_result.py` 生成的最终 v2.2 JSON。不要添加 Markdown 代码围栏、解释文字或调试信息。

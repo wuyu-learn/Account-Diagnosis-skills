@@ -40,7 +40,11 @@ CARD_GROUPS = [
 ]
 
 
-def section_item(section_type: str, card_id: str | None = None) -> dict:
+def section_item(
+    section_type: str,
+    card_id: str | None = None,
+    data: dict | None = None,
+) -> dict:
     item = {
         "section": {
             "type": section_type,
@@ -52,7 +56,7 @@ def section_item(section_type: str, card_id: str | None = None) -> dict:
         item["card"] = {
             "cardId": card_id,
             "dataMode": "deferred",
-            "data": {},
+            "data": data if data is not None else {},
         }
     return item
 
@@ -81,19 +85,30 @@ class ComposeResultTests(unittest.TestCase):
             for section_type, card_ids in CARD_GROUPS
             for card_id in card_ids
         ]
+        # ACC-15 收益归因要求 data 携带 dateType。
+        for item in business_items:
+            if item["card"]["cardId"] == "ACC-15":
+                item["card"]["data"] = {"dateType": "Y1"}
 
         result = compose_result(payload_for(business_items, "account_overview"))
 
         self.assertEqual(
             set(result),
             {
-                "scene",
-                "primaryAccountIntent",
+                "version",
+                "meta",
                 "sections",
                 "cards",
+                "risk_warning",
                 "followUp",
             },
         )
+        self.assertEqual(result["version"], "2.2")
+        self.assertEqual(
+            result["meta"],
+            {"scene": "问账户", "intent": "account_overview"},
+        )
+        self.assertTrue(result["risk_warning"].strip())
         self.assertEqual(len(result["cards"]), 18)
         self.assertEqual(
             [card["cardId"] for card in result["cards"]],
@@ -102,7 +117,9 @@ class ComposeResultTests(unittest.TestCase):
         self.assertTrue(
             all(card["dataMode"] == "deferred" for card in result["cards"])
         )
-        self.assertTrue(all(card["data"] == {} for card in result["cards"]))
+        self.assertTrue(all(card["data"] == {} or card["cardId"] == "ACC-15" for card in result["cards"]))
+        acc15 = next(card for card in result["cards"] if card["cardId"] == "ACC-15")
+        self.assertEqual(acc15["data"], {"dateType": "Y1"})
         for section in result["sections"][1:-1]:
             self.assertIn("cardId", section)
 
@@ -118,6 +135,7 @@ class ComposeResultTests(unittest.TestCase):
             [section["type"] for section in result["sections"]],
             ["summary", "watchlist_valuation", "conclusion"],
         )
+        self.assertEqual(result["meta"]["intent"], "watchlist_valuation")
 
     def test_deduplicates_and_limits_follow_up(self) -> None:
         result = compose_result(
@@ -216,7 +234,7 @@ class ComposeResultTests(unittest.TestCase):
         with self.assertRaisesRegex(CompositionError, "duplicate cardId"):
             compose_result(duplicate)
 
-    def test_rejects_final_response_fields(self) -> None:
+    def test_rejects_final_response_fields_as_input(self) -> None:
         payload = payload_for(
             [section_item("account_overview", "ACC-01")],
             "account_overview",
@@ -261,6 +279,95 @@ class ComposeResultTests(unittest.TestCase):
         empty_narrative["items"][1]["section"]["narrative"] = ""
         with self.assertRaisesRegex(CompositionError, "must not be empty"):
             compose_result(empty_narrative)
+
+    def test_accepts_per_request_data_params(self) -> None:
+        # ACC-15 dateType（必填）
+        result = compose_result(
+            payload_for(
+                [section_item("return_attribution", "ACC-15", {"dateType": "Y1"})],
+                "return_attribution",
+            )
+        )
+        acc15 = next(c for c in result["cards"] if c["cardId"] == "ACC-15")
+        self.assertEqual(acc15["data"], {"dateType": "Y1"})
+
+        # ACC-19 productId（允许，可省略）
+        result = compose_result(
+            payload_for(
+                [section_item("account_overview", "ACC-19", {"productId": "P001"})],
+                "account_overview",
+            )
+        )
+        acc19 = next(c for c in result["cards"] if c["cardId"] == "ACC-19")
+        self.assertEqual(acc19["data"], {"productId": "P001"})
+
+        result = compose_result(
+            payload_for(
+                [section_item("account_overview", "ACC-19")],
+                "account_overview",
+            )
+        )
+        acc19 = next(c for c in result["cards"] if c["cardId"] == "ACC-19")
+        self.assertEqual(acc19["data"], {})
+
+        # ACC-03 serialNo + uri（允许）
+        result = compose_result(
+            payload_for(
+                [
+                    section_item(
+                        "account_overview", "ACC-03", {"serialNo": "S1", "uri": "U1"}
+                    )
+                ],
+                "account_overview",
+            )
+        )
+        acc03 = next(c for c in result["cards"] if c["cardId"] == "ACC-03")
+        self.assertEqual(acc03["data"], {"serialNo": "S1", "uri": "U1"})
+
+    def test_rejects_invalid_card_data(self) -> None:
+        # 默认卡非空 data 拒绝
+        default_card = payload_for(
+            [section_item("account_overview", "ACC-01", {"x": 1})],
+            "account_overview",
+        )
+        with self.assertRaisesRegex(CompositionError, "must be empty"):
+            compose_result(default_card)
+
+        # 身份参数拒绝
+        identity = payload_for(
+            [
+                section_item(
+                    "return_attribution",
+                    "ACC-15",
+                    {"dateType": "Y1", "custNo": "X"},
+                )
+            ],
+            "return_attribution",
+        )
+        with self.assertRaisesRegex(CompositionError, "identity param"):
+            compose_result(identity)
+
+        # per-request 卡的非法键拒绝
+        bad_key = payload_for(
+            [
+                section_item(
+                    "return_attribution",
+                    "ACC-15",
+                    {"dateType": "Y1", "foo": "bar"},
+                )
+            ],
+            "return_attribution",
+        )
+        with self.assertRaisesRegex(CompositionError, "only allows"):
+            compose_result(bad_key)
+
+        # ACC-15 缺必填 dateType 拒绝
+        missing = payload_for(
+            [section_item("return_attribution", "ACC-15")],
+            "return_attribution",
+        )
+        with self.assertRaisesRegex(CompositionError, "missing required"):
+            compose_result(missing)
 
 
 if __name__ == "__main__":

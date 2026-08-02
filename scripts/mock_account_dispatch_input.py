@@ -23,6 +23,7 @@ if hasattr(sys.stderr, "reconfigure"):
 def build_account_dispatch_input(question: str) -> str:
     """根据用户问题构造分发给“问账户”子 Agent 的完整输入。"""
     payload = {
+        "originalQuery": question,
         "scenes": [
             {
                 "scene": "问账户",

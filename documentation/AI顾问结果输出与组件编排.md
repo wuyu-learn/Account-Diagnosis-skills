@@ -2,7 +2,7 @@
 
 ## 文档定位
 
-本文档说明 AI 顾问生成结果的内容结构和页面编排方式，重点描述文字解读、数据卡片、结论、追问及风险提示之间的关系。
+本文档说明 AI 顾问生成结果的内容结构和页面编排方式，重点描述文字解读、数据卡片、结论、追问及风险提示之间的关系。账户任务的简单/复杂判定及调度规则见 [`AI 顾问账户路由.md`](./AI%20顾问账户路由.md)，复杂任务的诊断推理和文案规则见 [`AI顾问复杂账户诊断输出.md`](./AI顾问复杂账户诊断输出.md)。
 
 ## 结果结构
 
@@ -22,7 +22,7 @@
 | `version` | 标识当前结果协议版本 |
 | `meta` | 描述当前场景、意图及业务上下文 |
 | `sections` | 组织回答内容、文字解读和页面展示顺序 |
-| `cards` | 保存账户卡片组件；当前统一使用 `deferred` 且 `data` 为空对象 |
+| `cards` | 保存账户卡片组件；当前统一使用 `deferred`，`data` 只携带协议允许的业务参数 |
 | `risk_warning` | 展示统一风险提示 |
 | `followUp` | 提供可点击的后续问题 |
 
@@ -34,7 +34,7 @@
 - `sections[]` 和 `cards[]` 是前端消费的主要内容。
 - `risk_warning` 必须为上游合规规则提供的非空字符串，并展示在回答末尾。
 - `followUp` 可以为空数组。
-- 不再使用顶层 `text` 和 `conclusion`；结论统一放入 `sections[]`。
+- 不使用顶层 `text` 或 `conclusion`；所有任务的 `summary` 和复杂任务的 `conclusion` 均放入 `sections[]`，简单任务不生成 `conclusion`。
 
 ## Sections
 
@@ -43,8 +43,8 @@
 ```json
 {
   "type": "return_performance",
-  "title": "账户收益表现",
-  "narrative": "累计收益、收益率等数据由账户收益组件加载展示。",
+  "title": "账户收益总览",
+  "narrative": "下方卡片展示账户累计收益、收益率和收益走势。",
   "cardId": "ACC-13-A"
 }
 ```
@@ -64,7 +64,7 @@ section.title
 → cardId 对应的数据卡片
 ```
 
-当前账户卡片均为 `deferred`，业务 section 的 `narrative` 只能说明查询范围和卡片将展示的内容。`summary` 和 `conclusion` 可以使用本次 MCP 返回的真实数据生成；没有 MCP 数据依据时，不得生成金额、收益率、趋势、归因或诊断结论。卡片结构和数据规则见 `documentation/AI顾问账户卡片与数据.md`。
+当前账户卡片均为 `deferred`，业务 section 的 `narrative` 只能说明查询范围和卡片将展示的内容。所有任务的 `summary` 和复杂任务的 `conclusion` 可以使用本次 MCP 返回的真实数据生成；没有 MCP 数据依据时，不得生成金额、收益率、趋势、归因或诊断结论。卡片结构和数据规则见 `documentation/AI顾问账户卡片与数据.md`。
 
 ## 账户回答类型
 
@@ -73,11 +73,18 @@ section.title
 - **账户诊断类**：资产总览、持仓结构、收益表现、收益归因，对应 ACC-01～ACC-15。
 - **自选基金类**：自选基金估值，对应 ACC-18。
 
-一次账户域结果只属于其中一个大类，由本次问账户分发的 `primaryAccountIntent` 所在大类决定，用一对 `summary` 和 `conclusion` 包裹该大类命中的业务 section。同一大类内的多个意图按固定业务顺序混排；当一次问账户分发同时包含两个大类的意图时，账户域只处理 `primaryAccountIntent` 所在大类，丢弃另一大类，不为被丢弃的大类生成 section 或卡片。
+一次账户域结果只属于其中一个大类，由本次问账户分发的 `primaryAccountIntent` 所在大类决定。所有结果以 `summary` 开始；只有复杂任务以 `conclusion` 收束。同一大类内的多个意图按固定业务顺序混排；当一次问账户分发同时包含两个大类的意图时，账户域只处理 `primaryAccountIntent` 所在大类，丢弃另一大类，不为被丢弃的大类生成 section 或卡片。
 
 ### 账户诊断类
 
-标准结构：
+简单任务结构：
+
+```text
+summary
+→ 实际命中的 account_overview / holding_structure / return_performance / return_attribution
+```
+
+复杂任务结构：
 
 ```text
 summary
@@ -95,16 +102,15 @@ summary
 | `holding_structure` | 展示持仓明细、资产分布和集中度 |
 | `return_performance` | 展示收益结果、分年表现和收益明细 |
 | `return_attribution` | 说明收益贡献、收益拖累及原因 |
-| `conclusion` | 基于同一批 MCP 数据收束回答并给出后续方向 |
+| `conclusion` | 仅复杂任务生成；基于同一批 MCP 数据形成跨维度诊断和账户级收束 |
 
-`summary` 和 `conclusion` 构成回答的外层结构。中间业务 section 根据用户实际问题选择，不要求每次全部出现，并按照上表中的业务顺序编排。
+`summary` 是所有任务的起始 section；`conclusion` 只属于复杂任务。中间业务 section 根据用户实际问题选择，不要求每次全部出现，并按照上表中的业务顺序编排。
 
 例如，只询问收益表现时：
 
 ```text
 summary
 → return_performance
-→ conclusion
 ```
 
 要求完整账户诊断时：
@@ -125,7 +131,7 @@ summary
 账户意图和标准回复模板承担不同职责：
 
 - 账户意图和 `subQuery` 用于精确选择卡片，决定回答需要哪些业务数据。
-- 标准回复模板用于组织完整回答，决定 `summary`、业务 section 和 `conclusion` 的结构与顺序。
+- 标准回复模板用于组织完整回答，决定 `summary` 和业务 section 的结构与顺序；上游复杂度结果决定是否追加 `conclusion`。
 
 完整处理链路：
 
@@ -135,26 +141,27 @@ summary
 → 根据 subQuery 选择精确卡片
 → 根据回答类型选择标准模板
 → 将卡片放入对应业务 section
-→ 生成统一的 summary 和 conclusion
+→ 生成统一的 summary
+→ 若 taskComplexity = complex，生成 conclusion
 ```
 
-一个具体子意图即使只命中一张卡片，最终回复也必须使用完整模板。例如，用户询问今年收益并命中 ACC-13-A 时，回复结构是：
+一个具体子意图即使只命中一张卡片，最终回复也必须使用对应复杂度的完整模板。例如，用户询问今年收益并命中 ACC-13-A，属于简单任务，回复结构是：
 
 ```text
 summary
 → return_performance + ACC-13-A
-→ conclusion
 ```
 
-同一账户回答大类内的复合问题命中多张卡片时，只生成一个公共 `summary` 和一个公共 `conclusion`，中间按业务顺序放入各卡片对应的业务 section：
+同一账户回答大类内的多个独立简单问题命中多张卡片时，只生成一个公共 `summary`，不生成 `conclusion`；中间按业务顺序放入各卡片对应的业务 section：
 
 ```text
 summary
 → holding_structure + ACC-11
 → return_performance + ACC-13-A
 → return_attribution + ACC-15
-→ conclusion
 ```
+
+如果用户要求建立持仓、收益和归因之间的关系，或要求形成账户级综合判断，则判为复杂任务，并在相同业务 section 之后追加一个公共 `conclusion`。
 
 编排层使用上游账户模块已经确定的卡片结果，不重新分类意图，不因文案中出现“收益”“持仓”等词额外增加或替换卡片。卡片决定模板中间的业务内容，但卡片本身不等于完整回复。编排层不检查卡片的接口记录、数据状态或取数结果。
 
@@ -201,25 +208,23 @@ ACC-15 只生成一个 `return_attribution` section，由同一张卡片展示�
 
 ### 自选基金类
 
-自选基金估值关注用户的自选或关注列表，不参与账户资产、持仓、收益和归因的诊断链路，使用独立结构：
+自选基金估值关注用户的自选或关注列表，不参与账户资产、持仓、收益和归因的诊断链路。此类查询默认属于简单任务，使用独立结构：
 
 ```text
 summary
 → watchlist_valuation
-→ conclusion
 ```
 
 | `section.type` | 作用 |
 | --- | --- |
 | `summary` | 在存在可用 MCP 数据时概括自选基金核心结果 |
 | `watchlist_valuation` | 展示自选基金估值、当日涨跌和净值更新情况 |
-| `conclusion` | 在存在可用 MCP 数据时收束回答并给出后续方向 |
 
 用户询问自选或关注基金的当日估值、涨跌或净值更新情况时，精确选择 ACC-18，并生成一个 `watchlist_valuation` section 和 deferred 卡片。是否已有接口或数据不影响该卡片进入编排。
 
 自选基金类结果是否生成，取决于本次问账户分发的 `primaryAccountIntent` 是否属于自选基金类；当 primary 意图属于账户诊断类时，自选意图被丢弃，不生成自选类 section。
 
-### MCP 驱动的 Summary 与 Conclusion
+### MCP 驱动的 Summary 与复杂任务 Conclusion
 
 卡片计划和 MCP 数据计划相互独立：
 
@@ -229,39 +234,41 @@ summary
 │   └── 根据具体子意图选择 deferred 卡片
 │
 └── MCP 数据计划
-    └── 根据 summary 和 conclusion 的最小数据需求选择工具
+    └── 根据 summary，以及复杂任务 conclusion 的最小数据需求选择工具
 ```
 
-选中卡片不代表必须调用与其业务相近的 MCP。只有当 `summary` 或 `conclusion` 需要某项真实数据时，才调用能够提供该数据的 MCP。
+选中卡片不代表必须调用与其业务相近的 MCP。只有当 `summary` 或复杂任务的 `conclusion` 需要某项真实数据时，才调用能够提供该数据的 MCP。
 
 完整流程：
 
 ```text
 识别用户希望得到的核心回答
-→ 确定 summary 和 conclusion 所需的最小数据
+→ 读取 taskComplexity
+→ 确定 summary，以及复杂任务 conclusion 所需的最小数据
 → 选择并调用必要 MCP
 → 校验 MCP 返回状态和数据范围
 → 基于 MCP 真实数据生成 summary
 → 生成 deferred 业务 section 和卡片
-→ 基于同一批 MCP 数据生成 conclusion
+└── taskComplexity = complex 时，基于同一批 MCP 数据生成 conclusion
 ```
 
 #### 总体生成思路
 
 ```text
 summary = 查询范围 + 1～3 个关键 MCP 事实 + 直接回答
-conclusion = 整体判断 + 主要关注点 + 后续方向
+复杂任务 conclusion = 跨维度整体判断 + 主要关注点及优先级 + 后续方向
 ```
 
-| 内容 | `summary` | `conclusion` |
+| 内容 | `summary` | 复杂任务的 `conclusion` |
 | --- | --- | --- |
+| 是否生成 | 所有任务 | 仅复杂任务 |
 | 回答的问题 | 结果是什么 | 应该怎么看 |
 | 位置 | 回答开头 | 回答结尾 |
 | 数据依据 | 最少必要的 MCP 真实数据 | 原则上复用 summary 的同一批 MCP 数据 |
 | 内容重点 | 关键事实和直接答案 | 综合判断和后续关注方向 |
 | 长度建议 | 1～3 句话 | 1～2 句话 |
 
-`summary` 不写“下面为您展示”等空泛引导语；`conclusion` 不重复摘要，也不得引入 MCP 未返回的新事实。两者都不得根据 deferred 卡片推断数据。
+`summary` 不写“下面为您展示”等空泛引导语；复杂任务的 `conclusion` 不重复摘要，也不得引入 MCP 未返回的新事实。两者都不得根据 deferred 卡片推断数据。
 
 #### Summary 生成规则
 
@@ -273,17 +280,18 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 
 #### Conclusion 生成规则
 
+- 只有 `taskComplexity = complex` 时才生成 `conclusion`；简单任务不得生成。
 - `conclusion` 使用本次已经取得的 MCP 数据对回答进行收束，不为每张卡片分别生成结论。
 - `conclusion` 原则上复用为 `summary` 已调用的 MCP，不因存在 deferred 卡片自动增加工具调用。
 - 只有用户明确要求进一步诊断，且现有 MCP 数据不足时，才增加完成该判断所必需的 MCP。
 - `conclusion` 只能覆盖实际查询的数据范围，不得把局部结果扩展为完整账户判断。
-- 后续可查看的卡片或问题通过 `conclusion` 和 `followUp` 引导，不需要为此预先调用对应 MCP。
+- 后续可查看的卡片或问题通过 `conclusion` 和 `followUp` 引导，不需要为此预先调用对应 MCP；简单任务只使用 `followUp`。
 
 #### MCP 选择参考
 
-下表按 summary 和 conclusion 需要回答的内容选择 MCP，不表示 MCP 与卡片一一绑定：
+下表按 `summary` 或复杂任务 `conclusion` 需要回答的内容选择 MCP，不表示 MCP 与卡片一一绑定：
 
-| 摘要或结论需要的数据 | 可用 MCP |
+| Summary 或复杂任务 Conclusion 需要的数据 | 可用 MCP |
 | --- | --- |
 | 客户总资产和账户构成 | `queryAssetsTotal` |
 | 今日账户表现 | `queryAssetIndex` |
@@ -299,7 +307,7 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 #### 业务 Section 的文案边界
 
 - 业务 section 关联 deferred 卡片，只说明卡片将展示的内容。
-- MCP 数据默认只用于 `summary` 和 `conclusion`，不要求在每个业务 section 中重复分析。
+- MCP 数据默认只用于 `summary` 和复杂任务的 `conclusion`，不要求在每个业务 section 中重复分析。
 - MCP 返回值不写入 `cards[].data`，卡片仍由前端组件自行取数。
 - MCP 与前端卡片应使用一致的用户、账户范围、时间范围和业务口径。
 
@@ -307,20 +315,20 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 
 - MCP 调用失败、返回空数据或结果无法校验时，不得生成数据结论。
 - `summary` 只能明确说明当前无法取得回答所需的数据。
-- `conclusion` 只能说明暂不作业务判断，并提供可重试或继续查看的方向。
+- 复杂任务的 `conclusion` 只能说明暂不作账户级判断，并提供可重试或继续查看的方向；简单任务仍不得生成 `conclusion`。
 - 单个 MCP 失败不影响无依赖关系的 deferred 卡片输出，但不得用卡片尚未加载的数据补写摘要或结论。
 
 ### Section 与卡片的关联规则
 
-- 每次完整回复只生成一个 `summary` 和一个 `conclusion`，两者不关联卡片。
+- 每次完整回复只生成一个 `summary`；简单任务不生成 `conclusion`，复杂任务只生成一个 `conclusion`，两者均不关联卡片。
 - `summary` 根据本次用户问题和实际 MCP 数据概括核心结果，不总结未查询的数据。
-- `conclusion` 基于同一批 MCP 数据形成整体收束和后续方向，不为每个子意图重复生成。
+- 复杂任务的 `conclusion` 基于同一批 MCP 数据形成整体收束和后续方向，不为每个子意图重复生成，并且必须位于最后一个业务 section 之后。
 - 每个业务 section 最多关联一张卡片，`section.cardId` 必须等于该卡片的 `cardId`。
 - 同一意图命中多张卡片时，为每张卡片分别生成一个业务 section。
 - 同一个 `cardId` 在一次响应中只能出现一次，也只能被一个 section 关联。
 - 业务 section 的 `type` 由账户意图确定，标题和展示范围由精确卡片编号确定。
 - 卡片是否已有接口、是否能够取数或当前是否有数据，不属于编排层的判断条件。
-- deferred 卡片对应的业务 section 只能生成不包含具体数值、趋势或判断的中性文字；这一限制不影响 `summary` 和 `conclusion` 使用真实 MCP 数据。
+- deferred 卡片对应的业务 section 只能生成不包含具体数值、趋势或判断的中性文字；这一限制不影响 `summary` 和复杂任务的 `conclusion` 使用真实 MCP 数据。
 
 ## Cards
 
@@ -348,7 +356,7 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 
 ## 完整输出示例
 
-以下示例对应用户问题“我的账户今年收益怎么样”。具体子意图命中 ACC-13-A；系统只调用生成摘要和结论所需的 `queryProfitAnalyzeSum`，假设 MCP 实际返回今年累计收益 1250.35 元、累计收益率 3.20%，卡片仍保持 deferred：
+以下示例对应用户问题“我的账户今年收益怎么样”。该问题属于简单任务，具体子意图命中 ACC-13-A；系统只调用生成 `summary` 所需的 `queryProfitAnalyzeSum`，假设 MCP 实际返回今年累计收益 1250.35 元、累计收益率 3.20%，卡片仍保持 deferred：
 
 ```json
 {
@@ -365,14 +373,9 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
     },
     {
       "type": "return_performance",
-      "title": "账户收益表现",
-      "narrative": "累计收益、收益率及当前持有收益等数据由账户收益组件加载展示。",
+      "title": "账户收益总览",
+      "narrative": "下方卡片展示账户累计收益、收益率和收益走势。",
       "cardId": "ACC-13-A"
-    },
-    {
-      "type": "conclusion",
-      "title": "综合结论",
-      "narrative": "今年以来账户整体取得正收益；如需进一步了解收益的持续性和来源，可以继续查看历年收益和收益归因。"
     }
   ],
   "cards": [
@@ -390,9 +393,20 @@ conclusion = 整体判断 + 主要关注点 + 后续方向
 }
 ```
 
-示例中的数值只用于说明“MCP 文案数据链”和“deferred 卡片数据链”的关系，不是业务默认值。实际 `summary` 和 `conclusion` 必须使用本次 MCP 的真实返回；业务 section 不重复分析 MCP 数据，卡片继续由前端组件取数且 `data` 保持为空对象。
+示例中的数值只用于说明“MCP 文案数据链”和“deferred 卡片数据链”的关系，不是业务默认值。实际 `summary` 必须使用本次 MCP 的真实返回；业务 section 不重复分析 MCP 数据，卡片继续由前端组件取数且 `data` 保持为空对象。
 
 ## 典型编排
+
+简单任务：
+
+```text
+MCP 数据摘要
+→ 业务说明 + deferred 数据卡片
+→ 后续问题
+→ 风险提示
+```
+
+复杂任务：
 
 ```text
 MCP 数据摘要
@@ -404,7 +418,7 @@ MCP 数据摘要
 
 其中：
 
-- MCP 数据摘要、业务说明和 MCP 数据结论属于 `sections[]`。
+- MCP 数据摘要和业务说明属于 `sections[]`；MCP 数据结论仅在复杂任务中出现，也属于 `sections[]`。
 - 账户数据组件属于 `cards[]`，由前端组件完成取数。
 - 后续问题来自 `followUp`。
 - 页面底部风险提示来自 `risk_warning`。

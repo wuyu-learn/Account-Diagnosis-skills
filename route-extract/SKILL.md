@@ -1,6 +1,6 @@
 ---
 name: route-extract
-description: "对 AI 投顾用户问题进行场景分类、多场景拆分和实体抽取，覆盖问账户、问市场、问基金、问投教和问策略。用户提出投资相关问题，需要识别业务场景、拆分子问题或生成下游路由 JSON 时使用。"
+description: "对 AI 投顾用户问题进行原文透传、场景分类、多场景拆分和实体抽取，覆盖问账户、问市场、问基金、问投教和问策略。用户提出投资相关问题，需要保留原始问题、识别业务场景、拆分子问题或生成下游路由 JSON 时使用。"
 ---
 
 # Route & Extract（意图识别与实体抽取）
@@ -15,8 +15,9 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
 
 对每条用户输入完成两件事：
 
-1. **场景分类（Scene Classification）**：支持单场景和多场景。一句话包含多个问题时拆分为多个 `subQuery`，按 `weight` 降序排列。输出 `primaryScene` 与 `isMultiScene`。
-2. **实体抽取（Entity Extraction）**：提取基金名称、基金代码、基金公司、基金经理、市场主题、策略名称，供下游业务 Skill 使用。
+1. **原文透传**：将用户当前问题逐字写入 `originalQuery`，不得摘要、改写或清洗。
+2. **场景分类（Scene Classification）**：支持单场景和多场景。一句话包含多个问题时拆分为多个 `subQuery`，按 `weight` 降序排列。输出 `primaryScene` 与 `isMultiScene`。
+3. **实体抽取（Entity Extraction）**：提取基金名称、基金代码、基金公司、基金经理、市场主题、策略名称，供下游业务 Skill 使用。
 
 ## 场景目录
 
@@ -47,6 +48,7 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
 
 ```json
 {
+  "originalQuery": "帮我看看永赢先进制造怎么样，另外半导体现在行情如何？",
   "scenes": [
     {
       "scene": "问基金",
@@ -85,12 +87,13 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
 4. `primaryScene` 为 `weight` 最高记录的 `scene`；权重相同时取数组中第一条记录。
 5. `isMultiScene = true` 当且仅当 `scenes` 包含两个及以上场景记录，否则为 `false`，不要求记录的 `scene` 互不相同。
 6. `subQuery` 仅包含该记录对应的子问题，不得混入其他场景内容；必须保留该子问题中的关键实体，使下游能根据 `subQuery` 判断实体归属。
-7. `entities` 汇总当前问题中明确出现的全部实体。六个键必须全部出现，没有命中时使用空数组 `[]`；不得编造原文或明确历史上下文中未出现的实体。
-8. 用户表达不完整时，仅可使用明确提供的历史对话补全。没有相关上下文且仍可判断时，选择最接近的场景并降低 `weight`，一般不高于 `0.6`。
-9. 输入为空、只有寒暄，或与投资业务完全无关时，不强行归类，输出空 `scenes`、空实体、`primaryScene: null` 和 `isMultiScene: false`。
-10. `orchestration` 为下游编排预留字段，当前阶段固定输出 `null`。
-11. `clarify` 必须包含 `needed` 和 `question`。当前阶段不发起澄清，固定输出 `{ "needed": false, "question": null }`。
-12. 所有顶层字段必须完整输出，不得省略；输出必须是合法 JSON，不添加解释性文字。
+7. `originalQuery` 必须逐字等于当前用户问题；即使问题为空、无关或使用历史上下文补全，也不得改写该字段。
+8. `entities` 汇总当前问题中明确出现的全部实体。六个键必须全部出现，没有命中时使用空数组 `[]`；不得编造原文或明确历史上下文中未出现的实体。
+9. 用户表达不完整时，仅可使用明确提供的历史对话补全。没有相关上下文且仍可判断时，选择最接近的场景并降低 `weight`，一般不高于 `0.6`。
+10. 输入为空、只有寒暄，或与投资业务完全无关时，不强行归类，输出空 `scenes`、空实体、`primaryScene: null` 和 `isMultiScene: false`，但仍保留 `originalQuery`。
+11. `orchestration` 为下游编排预留字段，当前阶段固定输出 `null`。
+12. `clarify` 必须包含 `needed` 和 `question`。当前阶段不发起澄清，固定输出 `{ "needed": false, "question": null }`。
+13. 所有顶层字段必须完整输出，不得省略；输出必须是合法 JSON，不添加解释性文字。
 
 ## 边界情况
 
@@ -108,6 +111,7 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
 
 ```json
 {
+  "originalQuery": "帮我看看永赢先进制造怎么样，另外半导体现在行情如何？",
   "scenes": [
     { "scene": "问基金", "weight": 0.92, "subQuery": "永赢先进制造怎么样" },
     { "scene": "问市场", "weight": 0.74, "subQuery": "半导体现在行情如何" }
@@ -134,6 +138,7 @@ AI 投顾系统的统一入口（三段式流水线 Phase A）。识别用户问
 
 ```json
 {
+  "originalQuery": "什么是基金定投？",
   "scenes": [
     { "scene": "问投教", "weight": 0.95, "subQuery": "什么是基金定投" }
   ],

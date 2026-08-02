@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compose normalized result items into the final v2.2 account response JSON."""
+"""Merge deterministic business items with LLM text into final v2.2 JSON."""
 
 from __future__ import annotations
 
@@ -9,75 +9,24 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from account_contract import (
+    ACCOUNT_INTENTS,
+    CARD_SPECS,
+    IDENTITY_KEYS,
+    SECTION_ORDER,
+    TASK_COMPLEXITIES,
+    is_valid_date_type,
+    is_watchlist_card,
+)
+
 
 SCENE = "问账户"
 VERSION = "2.2"
-# 当前没有独立 Global Phase C / 合规来源，由脚本在输出阶段注入固定默认值，
-# 保证最终 v2.2 响应始终携带非空风险提示；接入真实合规来源后在此替换。
 DEFAULT_RISK_WARNING = "投资有风险，请结合自身情况审慎决策。"
-
-ACCOUNT_INTENTS = {
-    "account_overview",
-    "holding_structure",
-    "return_performance",
-    "return_attribution",
-    "watchlist_valuation",
-}
-
-SECTION_ORDER = {
-    "summary": 0,
-    "account_overview": 1,
-    "holding_structure": 2,
-    "return_performance": 3,
-    "return_attribution": 4,
-    "watchlist_valuation": 5,
-    "conclusion": 6,
-}
-
-CARD_TO_SECTION = {
-    "ACC-01": "account_overview",
-    "ACC-02": "account_overview",
-    "ACC-03": "account_overview",
-    "ACC-04": "account_overview",
-    "ACC-05": "account_overview",
-    "ACC-06": "account_overview",
-    "ACC-07": "account_overview",
-    "ACC-08": "account_overview",
-    "ACC-09": "account_overview",
-    "ACC-10": "account_overview",
-    "ACC-11": "holding_structure",
-    "ACC-12": "holding_structure",
-    "ACC-13-A": "return_performance",
-    "ACC-13-B": "return_performance",
-    "ACC-14": "return_performance",
-    "ACC-15": "return_attribution",
-    "ACC-18": "watchlist_valuation",
-    "ACC-19": "account_overview",
-}
-
-# Per-request 业务参数：cardId → 允许出现在 card.data 里的键。
-# 不在表中的卡片（默认卡）data 必须为空对象。
-CARD_DATA_PARAMS: dict[str, frozenset[str]] = {
-    "ACC-15": frozenset({"dateType"}),
-    "ACC-19": frozenset({"productId"}),
-    "ACC-03": frozenset({"serialNo", "uri"}),
-    "ACC-05": frozenset({"serialNo", "uri"}),
-    "ACC-06": frozenset({"serialNo", "uri"}),
-    "ACC-08": frozenset({"serialNo", "uri"}),
-    "ACC-10": frozenset({"serialNo", "uri"}),
-}
-
-# 必须存在的业务参数（当前仅 ACC-15 的 dateType：由意图解析生成，未明确时兜底 N）。
-CARD_REQUIRED_DATA_PARAMS: dict[str, frozenset[str]] = {
-    "ACC-15": frozenset({"dateType"}),
-}
-
-# 身份参数禁止出现在任何卡的 data 中（由可信运行时注入）。
-IDENTITY_KEYS = frozenset({"custNo", "accountName"})
 
 
 class CompositionError(ValueError):
-    """Raised when input violates the result contract."""
+    """Raised when input violates the final account result contract."""
 
 
 def require_object(value: Any, path: str) -> dict[str, Any]:
@@ -86,12 +35,10 @@ def require_object(value: Any, path: str) -> dict[str, Any]:
     return value
 
 
-def require_string(value: Any, path: str, allow_empty: bool = False) -> str:
-    if not isinstance(value, str):
-        raise CompositionError(f"{path} must be a string")
-    if not allow_empty and not value.strip():
-        raise CompositionError(f"{path} must not be empty")
-    return value
+def require_string(value: Any, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CompositionError(f"{path} must be a non-empty string")
+    return value.strip()
 
 
 def normalize_follow_up(value: Any) -> list[str]:
@@ -102,216 +49,249 @@ def normalize_follow_up(value: Any) -> list[str]:
 
     result: list[str] = []
     for index, item in enumerate(value):
-        text = require_string(item, f"followUp[{index}]").strip()
-        if text not in result:
-            result.append(text)
+        follow_up = require_string(item, f"followUp[{index}]")
+        if follow_up not in result:
+            result.append(follow_up)
         if len(result) == 3:
             break
     return result
 
 
-def normalize_card(value: Any, index: int) -> dict[str, Any]:
-    card = require_object(value, f"items[{index}].card")
-    allowed = {"cardId", "dataMode", "data"}
-    unsupported = sorted(set(card) - allowed)
+def normalize_text_section(value: Any, section_type: str) -> dict[str, str]:
+    section = require_object(value, section_type)
+    unsupported = sorted(set(section) - {"title", "narrative"})
     if unsupported:
         raise CompositionError(
-            f"items[{index}].card has unsupported fields: {', '.join(unsupported)}"
+            f"{section_type} has unsupported fields: " + ", ".join(unsupported)
+        )
+    return {
+        "type": section_type,
+        "title": require_string(section.get("title"), f"{section_type}.title"),
+        "narrative": require_string(
+            section.get("narrative"), f"{section_type}.narrative"
+        ),
+    }
+
+
+def normalize_card(value: Any, index: int) -> dict[str, Any]:
+    card = require_object(value, f"businessItems[{index}].card")
+    unsupported = sorted(set(card) - {"cardId", "dataMode", "data"})
+    if unsupported:
+        raise CompositionError(
+            f"businessItems[{index}].card has unsupported fields: "
+            + ", ".join(unsupported)
         )
 
-    card_id = require_string(card.get("cardId"), f"items[{index}].card.cardId")
-    if card_id not in CARD_TO_SECTION:
+    card_id = require_string(
+        card.get("cardId"), f"businessItems[{index}].card.cardId"
+    )
+    if card_id not in CARD_SPECS:
         raise CompositionError(
-            f"items[{index}].card.cardId is unsupported: {card_id}"
+            f"businessItems[{index}].card.cardId is unsupported: {card_id}"
         )
 
     data_mode = require_string(
-        card.get("dataMode"), f"items[{index}].card.dataMode"
+        card.get("dataMode"), f"businessItems[{index}].card.dataMode"
     )
     if data_mode != "deferred":
         raise CompositionError(
-            f"items[{index}].card.dataMode must be deferred"
+            f"businessItems[{index}].card.dataMode must be deferred"
         )
 
-    data = require_object(card.get("data"), f"items[{index}].card.data")
-    allowed_params = CARD_DATA_PARAMS.get(card_id, frozenset())
-    required_params = CARD_REQUIRED_DATA_PARAMS.get(card_id, frozenset())
+    data = require_object(card.get("data"), f"businessItems[{index}].card.data")
+    spec = CARD_SPECS[card_id]
+    allowed_params = tuple(spec["allowedParams"])
+    required_params = tuple(spec["requiredParams"])
+
     for key in data:
         if key in IDENTITY_KEYS:
             raise CompositionError(
-                f"items[{index}].card.data must not carry identity param '{key}'"
+                f"businessItems[{index}].card.data must not carry identity param '{key}'"
             )
         if key not in allowed_params:
             if allowed_params:
                 raise CompositionError(
-                    f"items[{index}].card.data for {card_id} only allows "
-                    f"{sorted(allowed_params)}, got '{key}'"
+                    f"businessItems[{index}].card.data for {card_id} only allows "
+                    f"{list(allowed_params)}, got '{key}'"
                 )
             raise CompositionError(
-                f"items[{index}].card.data for {card_id} must be empty; "
-                "business params are carried by the frontend component"
+                f"businessItems[{index}].card.data for {card_id} must be empty"
             )
-    missing = sorted(set(required_params) - set(data))
+
+    missing = [key for key in required_params if key not in data]
     if missing:
         raise CompositionError(
-            f"items[{index}].card.data for {card_id} is missing required "
+            f"businessItems[{index}].card.data for {card_id} is missing required "
             f"param(s): {', '.join(missing)}"
         )
 
-    return {"cardId": card_id, "dataMode": data_mode, "data": data}
+    normalized_data: dict[str, str] = {}
+    for key in allowed_params:
+        if key not in data:
+            continue
+        normalized_data[key] = require_string(
+            data[key], f"businessItems[{index}].card.data.{key}"
+        )
+
+    if card_id == "ACC-15" and not is_valid_date_type(
+        normalized_data["dateType"]
+    ):
+        raise CompositionError(
+            f"businessItems[{index}].card.data.dateType is unsupported: "
+            f"{normalized_data['dateType']}"
+        )
+
+    return {"cardId": card_id, "dataMode": data_mode, "data": normalized_data}
 
 
-def normalize_section(
-    value: Any, index: int, card_id: str | None
-) -> dict[str, Any]:
-    section = dict(require_object(value, f"items[{index}].section"))
-    allowed = {"type", "title", "narrative", "cardId"}
-    unsupported = sorted(set(section) - allowed)
+def normalize_business_item(
+    value: Any, index: int
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    item = require_object(value, f"businessItems[{index}]")
+    unsupported = sorted(set(item) - {"section", "card"})
     if unsupported:
         raise CompositionError(
-            f"items[{index}].section has unsupported fields: "
+            f"businessItems[{index}] has unsupported fields: "
             + ", ".join(unsupported)
+        )
+    if "section" not in item or "card" not in item:
+        raise CompositionError(
+            f"businessItems[{index}] must contain section and card"
+        )
+
+    card = normalize_card(item["card"], index)
+    card_id = card["cardId"]
+    spec = CARD_SPECS[card_id]
+
+    section = require_object(item["section"], f"businessItems[{index}].section")
+    extra_section_fields = sorted(set(section) - {"type", "title", "narrative"})
+    if extra_section_fields:
+        raise CompositionError(
+            f"businessItems[{index}].section has unsupported fields: "
+            + ", ".join(extra_section_fields)
         )
 
     section_type = require_string(
-        section.get("type"), f"items[{index}].section.type"
+        section.get("type"), f"businessItems[{index}].section.type"
     )
-    if section_type not in SECTION_ORDER:
+    expected_type = str(spec["sectionType"])
+    if section_type != expected_type:
         raise CompositionError(
-            f"items[{index}].section.type is unsupported: {section_type}"
+            f"businessItems[{index}] card {card_id} requires section.type "
+            f"{expected_type}, got {section_type}"
         )
-    require_string(section.get("title"), f"items[{index}].section.title")
-    require_string(
-        section.get("narrative"),
-        f"items[{index}].section.narrative",
+
+    title = require_string(
+        section.get("title"), f"businessItems[{index}].section.title"
     )
-
-    section_card_id = section.get("cardId")
-    if section_card_id is not None:
-        require_string(section_card_id, f"items[{index}].section.cardId")
-
-    if card_id is not None:
-        expected_section_type = CARD_TO_SECTION[card_id]
-        if section_type != expected_section_type:
-            raise CompositionError(
-                f"items[{index}] card {card_id} requires section.type "
-                f"{expected_section_type}, got {section_type}"
-            )
-        if section_card_id is not None and section_card_id != card_id:
-            raise CompositionError(
-                f"items[{index}] section.cardId does not match card.cardId"
-            )
-        section["cardId"] = card_id
-    elif section_card_id is not None:
+    narrative = require_string(
+        section.get("narrative"), f"businessItems[{index}].section.narrative"
+    )
+    if title != spec["title"] or narrative != spec["narrative"]:
         raise CompositionError(
-            f"items[{index}].section references a card that was not provided"
+            f"businessItems[{index}] section text must match the fixed card contract"
         )
 
-    if section_type in {"summary", "conclusion"} and card_id is not None:
-        raise CompositionError(
-            f"items[{index}].section.type {section_type} must not have a card"
-        )
-    if section_type in ACCOUNT_INTENTS and card_id is None:
-        raise CompositionError(
-            f"items[{index}].section.type {section_type} must have a card"
-        )
-
-    return section
+    normalized_section = {
+        "type": section_type,
+        "title": title,
+        "narrative": narrative,
+        "cardId": card_id,
+    }
+    return normalized_section, card
 
 
 def compose_result(payload: Any) -> dict[str, Any]:
     root = require_object(payload, "input")
     allowed_root_keys = {
         "scene",
+        "taskComplexity",
         "primaryAccountIntent",
-        "items",
+        "businessItems",
+        "summary",
+        "conclusion",
         "followUp",
     }
-    unsupported_root_keys = sorted(set(root) - allowed_root_keys)
-    if unsupported_root_keys:
-        raise CompositionError(
-            "input has unsupported fields: " + ", ".join(unsupported_root_keys)
-        )
+    unsupported = sorted(set(root) - allowed_root_keys)
+    if unsupported:
+        raise CompositionError("input has unsupported fields: " + ", ".join(unsupported))
 
     scene = require_string(root.get("scene"), "scene")
     if scene != SCENE:
         raise CompositionError(f"scene must be {SCENE}")
-    intent = require_string(
+
+    complexity = require_string(root.get("taskComplexity"), "taskComplexity")
+    if complexity not in TASK_COMPLEXITIES:
+        raise CompositionError(f"taskComplexity is unsupported: {complexity}")
+
+    primary_intent = require_string(
         root.get("primaryAccountIntent"), "primaryAccountIntent"
     )
-    if intent not in ACCOUNT_INTENTS:
+    if primary_intent not in ACCOUNT_INTENTS:
         raise CompositionError(
-            f"primaryAccountIntent is unsupported: {intent}"
+            f"primaryAccountIntent is unsupported: {primary_intent}"
         )
+    if primary_intent == "watchlist_valuation" and complexity != "simple":
+        raise CompositionError("watchlist_valuation only supports simple tasks")
 
-    items = root.get("items")
-    if not isinstance(items, list):
-        raise CompositionError("items must be an array")
-    if len(items) < 3:
-        raise CompositionError(
-            "items must contain summary, at least one business section, and conclusion"
-        )
+    summary = normalize_text_section(root.get("summary"), "summary")
+    if complexity == "simple":
+        if "conclusion" in root:
+            raise CompositionError("simple task must not include conclusion")
+        conclusion = None
+    else:
+        if "conclusion" not in root:
+            raise CompositionError("complex task requires conclusion")
+        conclusion = normalize_text_section(root.get("conclusion"), "conclusion")
 
-    follow_up = normalize_follow_up(root.get("followUp", []))
+    raw_business_items = root.get("businessItems")
+    if not isinstance(raw_business_items, list) or not raw_business_items:
+        raise CompositionError("businessItems must be a non-empty array")
 
-    sections: list[dict[str, Any]] = []
+    business_sections: list[dict[str, Any]] = []
     cards: list[dict[str, Any]] = []
     seen_card_ids: set[str] = set()
-    section_types: list[str] = []
+    previous_rank = -1
+    primary_is_watchlist = primary_intent == "watchlist_valuation"
 
-    for index, raw_item in enumerate(items):
-        item = require_object(raw_item, f"items[{index}]")
-        unsupported_item_keys = sorted(set(item) - {"section", "card"})
-        if unsupported_item_keys:
+    for index, raw_item in enumerate(raw_business_items):
+        section, card = normalize_business_item(raw_item, index)
+        card_id = card["cardId"]
+        if card_id in seen_card_ids:
+            raise CompositionError(f"duplicate cardId: {card_id}")
+        seen_card_ids.add(card_id)
+
+        if is_watchlist_card(card_id) != primary_is_watchlist:
             raise CompositionError(
-                f"items[{index}] has unsupported fields: "
-                + ", ".join(unsupported_item_keys)
+                "account diagnosis cards and watchlist cards must not be mixed"
             )
 
-        raw_card = item.get("card")
-        card = normalize_card(raw_card, index) if raw_card is not None else None
-        card_id = card["cardId"] if card is not None else None
-        section = normalize_section(item.get("section"), index, card_id)
-        sections.append(section)
-        section_types.append(section["type"])
-
-        if card is not None:
-            if card_id in seen_card_ids:
-                raise CompositionError(f"duplicate cardId: {card_id}")
-            seen_card_ids.add(card_id)
-            cards.append(card)
-
-    if section_types[0] != "summary":
-        raise CompositionError("the first section must be summary")
-    if section_types[-1] != "conclusion":
-        raise CompositionError("the last section must be conclusion")
-    if section_types.count("summary") != 1:
-        raise CompositionError("exactly one summary section is required")
-    if section_types.count("conclusion") != 1:
-        raise CompositionError("exactly one conclusion section is required")
-
-    previous_rank = -1
-    for index, section_type in enumerate(section_types):
-        rank = SECTION_ORDER[section_type]
+        rank = SECTION_ORDER[section["type"]]
         if rank < previous_rank:
             raise CompositionError(
-                f"items[{index}].section.type {section_type} violates the fixed section order"
+                f"businessItems[{index}].section.type {section['type']} "
+                "violates the fixed section order"
             )
         previous_rank = rank
+        business_sections.append(section)
+        cards.append(card)
 
-    business_types = set(section_types[1:-1])
-    if intent not in business_types:
+    if primary_intent not in {section["type"] for section in business_sections}:
         raise CompositionError(
             "primaryAccountIntent must match at least one business section"
         )
 
+    sections = [summary, *business_sections]
+    if conclusion is not None:
+        sections.append(conclusion)
+
     return {
         "version": VERSION,
-        "meta": {"scene": SCENE, "intent": intent},
+        "meta": {"scene": SCENE, "intent": primary_intent},
         "sections": sections,
         "cards": cards,
         "risk_warning": DEFAULT_RISK_WARNING,
-        "followUp": follow_up,
+        "followUp": normalize_follow_up(root.get("followUp", [])),
     }
 
 
@@ -331,14 +311,10 @@ def write_output(path: str, result: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compose normalized items into an account-domain result JSON."
+        description="Compose a final v2.2 account-domain result JSON."
     )
-    parser.add_argument(
-        "--input", "-i", default="-", help="Input JSON path; use - for stdin"
-    )
-    parser.add_argument(
-        "--output", "-o", default="-", help="Output JSON path; use - for stdout"
-    )
+    parser.add_argument("--input", "-i", default="-", help="Input JSON path")
+    parser.add_argument("--output", "-o", default="-", help="Output JSON path")
     args = parser.parse_args()
 
     try:

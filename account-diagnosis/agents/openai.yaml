@@ -1,4 +1,4 @@
 interface:
   display_name: "账户诊断总控"
-  short_description: "解析主 Agent 的问账户路由，选择 deferred 卡片并输出最终 v2.2 JSON"
-  default_prompt: "使用 $account-diagnosis 解析主 Agent 分发的完整 Route Extract JSON，处理问账户场景并输出最终 v2.2 JSON。"
+  short_description: "识别复杂度和卡片计划，代码化编排并校验账户诊断结果"
+  default_prompt: "使用 $account-diagnosis 处理完整问账户路由，按复杂度生成固定 v2.2 结果。"

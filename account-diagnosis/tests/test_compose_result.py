@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "compose_result.py"
+SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPT_PATH = SCRIPT_DIR / "compose_result.py"
+sys.path.insert(0, str(SCRIPT_DIR))
 SPEC = importlib.util.spec_from_file_location("compose_result", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -14,360 +17,266 @@ SPEC.loader.exec_module(MODULE)
 
 CompositionError = MODULE.CompositionError
 compose_result = MODULE.compose_result
+CARD_SPECS = MODULE.CARD_SPECS
 
 
-CARD_GROUPS = [
-    (
-        "account_overview",
-        [
-            "ACC-01",
-            "ACC-02",
-            "ACC-03",
-            "ACC-04",
-            "ACC-05",
-            "ACC-06",
-            "ACC-07",
-            "ACC-08",
-            "ACC-09",
-            "ACC-10",
-            "ACC-19",
-        ],
-    ),
-    ("holding_structure", ["ACC-11", "ACC-12"]),
-    ("return_performance", ["ACC-13-A", "ACC-13-B", "ACC-14"]),
-    ("return_attribution", ["ACC-15"]),
-    ("watchlist_valuation", ["ACC-18"]),
-]
-
-
-def section_item(
-    section_type: str,
-    card_id: str | None = None,
-    data: dict | None = None,
-) -> dict:
-    item = {
+def business_item(card_id: str, data: dict | None = None) -> dict:
+    spec = CARD_SPECS[card_id]
+    return {
         "section": {
-            "type": section_type,
-            "title": f"{section_type} 标题",
-            "narrative": f"{section_type} 内容",
-        }
-    }
-    if card_id is not None:
-        item["card"] = {
+            "type": spec["sectionType"],
+            "title": spec["title"],
+            "narrative": spec["narrative"],
+        },
+        "card": {
             "cardId": card_id,
             "dataMode": "deferred",
             "data": data if data is not None else {},
-        }
-    return item
+        },
+    }
 
 
 def payload_for(
     business_items: list[dict],
     intent: str,
+    *,
+    complexity: str = "simple",
+    include_conclusion: bool | None = None,
     follow_up: list[str] | None = None,
 ) -> dict:
-    return {
+    payload = {
         "scene": "问账户",
+        "taskComplexity": complexity,
         "primaryAccountIntent": intent,
-        "items": [
-            section_item("summary"),
-            *business_items,
-            section_item("conclusion"),
-        ],
+        "businessItems": business_items,
+        "summary": {"title": "回答摘要", "narrative": "基于真实数据的回答。"},
         "followUp": follow_up or [],
     }
+    should_include = complexity == "complex" if include_conclusion is None else include_conclusion
+    if should_include:
+        payload["conclusion"] = {
+            "title": "综合结论",
+            "narrative": "基于同一批证据形成的综合判断。",
+        }
+    return payload
 
 
 class ComposeResultTests(unittest.TestCase):
-    def test_accepts_all_18_cards_in_fixed_business_order(self) -> None:
-        business_items = [
-            section_item(section_type, card_id)
-            for section_type, card_ids in CARD_GROUPS
-            for card_id in card_ids
-        ]
-        # ACC-15 收益归因要求 data 携带 dateType。
-        for item in business_items:
-            if item["card"]["cardId"] == "ACC-15":
-                item["card"]["data"] = {"dateType": "Y1"}
-
-        result = compose_result(payload_for(business_items, "account_overview"))
-
+    def test_simple_task_has_summary_and_no_conclusion(self) -> None:
+        result = compose_result(
+            payload_for([business_item("ACC-13-A")], "return_performance")
+        )
+        self.assertEqual(
+            [section["type"] for section in result["sections"]],
+            ["summary", "return_performance"],
+        )
+        self.assertNotIn("taskComplexity", result)
         self.assertEqual(
             set(result),
-            {
-                "version",
-                "meta",
-                "sections",
-                "cards",
-                "risk_warning",
-                "followUp",
-            },
+            {"version", "meta", "sections", "cards", "risk_warning", "followUp"},
         )
-        self.assertEqual(result["version"], "2.2")
+
+    def test_complex_task_requires_and_emits_one_conclusion(self) -> None:
+        result = compose_result(
+            payload_for(
+                [
+                    business_item("ACC-11"),
+                    business_item("ACC-13-A"),
+                    business_item("ACC-15", {"dateType": "Y0"}),
+                ],
+                "holding_structure",
+                complexity="complex",
+            )
+        )
+        self.assertEqual(result["sections"][0]["type"], "summary")
+        self.assertEqual(result["sections"][-1]["type"], "conclusion")
         self.assertEqual(
-            result["meta"],
-            {"scene": "问账户", "intent": "account_overview"},
+            [section["type"] for section in result["sections"]].count("conclusion"),
+            1,
         )
-        self.assertTrue(result["risk_warning"].strip())
-        self.assertEqual(len(result["cards"]), 18)
-        self.assertEqual(
-            [card["cardId"] for card in result["cards"]],
-            [card_id for _, card_ids in CARD_GROUPS for card_id in card_ids],
+
+    def test_rejects_simple_conclusion_and_complex_missing_conclusion(self) -> None:
+        simple = payload_for(
+            [business_item("ACC-13-A")],
+            "return_performance",
+            include_conclusion=True,
         )
+        with self.assertRaisesRegex(CompositionError, "must not include"):
+            compose_result(simple)
+
+        complex_payload = payload_for(
+            [business_item("ACC-13-A")],
+            "return_performance",
+            complexity="complex",
+            include_conclusion=False,
+        )
+        with self.assertRaisesRegex(CompositionError, "requires conclusion"):
+            compose_result(complex_payload)
+
+    def test_accepts_all_account_diagnosis_cards_in_fixed_order(self) -> None:
+        ordered_card_ids = sorted(
+            (card_id for card_id in CARD_SPECS if card_id != "ACC-18"),
+            key=lambda card_id: MODULE.SECTION_ORDER[
+                CARD_SPECS[card_id]["sectionType"]
+            ],
+        )
+        items = [
+            business_item(
+                card_id, {"dateType": "Y1"} if card_id == "ACC-15" else None
+            )
+            for card_id in ordered_card_ids
+        ]
+        result = compose_result(payload_for(items, "account_overview"))
+        self.assertEqual(len(result["cards"]), 17)
         self.assertTrue(
             all(card["dataMode"] == "deferred" for card in result["cards"])
         )
-        self.assertTrue(all(card["data"] == {} or card["cardId"] == "ACC-15" for card in result["cards"]))
-        acc15 = next(card for card in result["cards"] if card["cardId"] == "ACC-15")
-        self.assertEqual(acc15["data"], {"dateType": "Y1"})
-        for section in result["sections"][1:-1]:
-            self.assertIn("cardId", section)
 
-    def test_accepts_watchlist_only_template(self) -> None:
+    def test_accepts_simple_watchlist_only(self) -> None:
         result = compose_result(
-            payload_for(
-                [section_item("watchlist_valuation", "ACC-18")],
-                "watchlist_valuation",
-            )
+            payload_for([business_item("ACC-18")], "watchlist_valuation")
         )
-
         self.assertEqual(
             [section["type"] for section in result["sections"]],
-            ["summary", "watchlist_valuation", "conclusion"],
+            ["summary", "watchlist_valuation"],
         )
-        self.assertEqual(result["meta"]["intent"], "watchlist_valuation")
+
+    def test_rejects_complex_watchlist_and_mixed_response_classes(self) -> None:
+        complex_watchlist = payload_for(
+            [business_item("ACC-18")],
+            "watchlist_valuation",
+            complexity="complex",
+        )
+        with self.assertRaisesRegex(CompositionError, "only supports simple"):
+            compose_result(complex_watchlist)
+
+        mixed = payload_for(
+            [business_item("ACC-01"), business_item("ACC-18")],
+            "account_overview",
+        )
+        with self.assertRaisesRegex(CompositionError, "must not be mixed"):
+            compose_result(mixed)
 
     def test_deduplicates_and_limits_follow_up(self) -> None:
         result = compose_result(
             payload_for(
-                [section_item("account_overview", "ACC-01")],
+                [business_item("ACC-01")],
                 "account_overview",
-                ["一", "一", "二", "三", "四"],
+                follow_up=["一", "一", "二", "三", "四"],
             )
         )
-
         self.assertEqual(result["followUp"], ["一", "二", "三"])
 
-    def test_rejects_inline_and_nonempty_card_data(self) -> None:
-        inline = payload_for(
-            [section_item("account_overview", "ACC-01")], "account_overview"
+    def test_rejects_tampered_fixed_section_text_and_order(self) -> None:
+        tampered = payload_for([business_item("ACC-01")], "account_overview")
+        tampered["businessItems"][0]["section"]["title"] = "LLM 改写标题"
+        with self.assertRaisesRegex(CompositionError, "fixed card contract"):
+            compose_result(tampered)
+
+        wrong_order = payload_for(
+            [business_item("ACC-13-A"), business_item("ACC-11")],
+            "return_performance",
         )
-        inline["items"][1]["card"]["dataMode"] = "inline"
-
-        with self.assertRaisesRegex(CompositionError, "must be deferred"):
-            compose_result(inline)
-
-        populated = payload_for(
-            [section_item("account_overview", "ACC-01")], "account_overview"
-        )
-        populated["items"][1]["card"]["data"] = {"amount": 1}
-
-        with self.assertRaisesRegex(CompositionError, "must be empty"):
-            compose_result(populated)
-
-    def test_rejects_unknown_card_and_wrong_section_mapping(self) -> None:
-        unknown = payload_for(
-            [section_item("return_attribution", "ACC-16")],
-            "return_attribution",
-        )
-        with self.assertRaisesRegex(CompositionError, "unsupported"):
-            compose_result(unknown)
-
-        wrong_mapping = payload_for(
-            [section_item("account_overview", "ACC-18")],
-            "account_overview",
-        )
-        with self.assertRaisesRegex(CompositionError, "requires section.type"):
-            compose_result(wrong_mapping)
-
-    def test_rejects_business_order_violation(self) -> None:
-        payload = payload_for(
-            [
-                section_item("watchlist_valuation", "ACC-18"),
-                section_item("account_overview", "ACC-01"),
-            ],
-            "watchlist_valuation",
-        )
-
         with self.assertRaisesRegex(CompositionError, "fixed section order"):
-            compose_result(payload)
+            compose_result(wrong_order)
 
-    def test_rejects_missing_or_duplicate_boundary_sections(self) -> None:
-        missing_summary = payload_for(
-            [
-                section_item("account_overview", "ACC-01"),
-                section_item("account_overview", "ACC-02"),
-            ],
-            "account_overview",
-        )
-        missing_summary["items"].pop(0)
-        with self.assertRaisesRegex(CompositionError, "first section"):
-            compose_result(missing_summary)
-
-        duplicate_summary = payload_for(
-            [section_item("account_overview", "ACC-01")],
-            "account_overview",
-        )
-        duplicate_summary["items"].insert(1, section_item("summary"))
-        with self.assertRaisesRegex(CompositionError, "exactly one summary"):
-            compose_result(duplicate_summary)
-
-        missing_conclusion = payload_for(
-            [
-                section_item("account_overview", "ACC-01"),
-                section_item("account_overview", "ACC-02"),
-            ],
-            "account_overview",
-        )
-        missing_conclusion["items"].pop()
-        with self.assertRaisesRegex(CompositionError, "last section"):
-            compose_result(missing_conclusion)
-
-    def test_rejects_duplicate_card(self) -> None:
+    def test_rejects_duplicate_unknown_and_wrong_mapping(self) -> None:
         duplicate = payload_for(
-            [
-                section_item("account_overview", "ACC-01"),
-                section_item("account_overview", "ACC-01"),
-            ],
+            [business_item("ACC-01"), business_item("ACC-01")],
             "account_overview",
         )
         with self.assertRaisesRegex(CompositionError, "duplicate cardId"):
             compose_result(duplicate)
 
-    def test_rejects_final_response_fields_as_input(self) -> None:
-        payload = payload_for(
-            [section_item("account_overview", "ACC-01")],
-            "account_overview",
-        )
-        payload["version"] = "2.2"
-        payload["meta"] = {"scene": "问账户"}
-        payload["risk_warning"] = "不属于账户域局部结果"
+        unknown = payload_for([business_item("ACC-01")], "account_overview")
+        unknown["businessItems"][0]["card"]["cardId"] = "ACC-16"
+        with self.assertRaisesRegex(CompositionError, "unsupported"):
+            compose_result(unknown)
 
-        with self.assertRaisesRegex(CompositionError, "unsupported fields"):
-            compose_result(payload)
-
-    def test_rejects_primary_intent_not_present_in_business_sections(self) -> None:
-        payload = payload_for(
-            [section_item("account_overview", "ACC-01")],
-            "watchlist_valuation",
-        )
-
-        with self.assertRaisesRegex(CompositionError, "must match"):
-            compose_result(payload)
-
-    def test_rejects_wrong_scene(self) -> None:
-        payload = payload_for(
-            [section_item("account_overview", "ACC-01")],
-            "account_overview",
-        )
-        payload["scene"] = "问基金"
-
-        with self.assertRaisesRegex(CompositionError, "scene must be 问账户"):
-            compose_result(payload)
-
-    def test_rejects_extra_fields_and_empty_narrative(self) -> None:
-        extra = payload_for(
-            [section_item("account_overview", "ACC-01")],
-            "account_overview",
-        )
-        extra["items"][1]["section"]["content"] = "旧协议字段"
-        with self.assertRaisesRegex(CompositionError, "unsupported fields"):
-            compose_result(extra)
-
-        empty_narrative = copy.deepcopy(extra)
-        del empty_narrative["items"][1]["section"]["content"]
-        empty_narrative["items"][1]["section"]["narrative"] = ""
-        with self.assertRaisesRegex(CompositionError, "must not be empty"):
-            compose_result(empty_narrative)
-
-    def test_accepts_per_request_data_params(self) -> None:
-        # ACC-15 dateType（必填）
-        result = compose_result(
-            payload_for(
-                [section_item("return_attribution", "ACC-15", {"dateType": "Y1"})],
-                "return_attribution",
-            )
-        )
-        acc15 = next(c for c in result["cards"] if c["cardId"] == "ACC-15")
-        self.assertEqual(acc15["data"], {"dateType": "Y1"})
-
-        # ACC-19 productId（允许，可省略）
-        result = compose_result(
-            payload_for(
-                [section_item("account_overview", "ACC-19", {"productId": "P001"})],
-                "account_overview",
-            )
-        )
-        acc19 = next(c for c in result["cards"] if c["cardId"] == "ACC-19")
-        self.assertEqual(acc19["data"], {"productId": "P001"})
-
-        result = compose_result(
-            payload_for(
-                [section_item("account_overview", "ACC-19")],
-                "account_overview",
-            )
-        )
-        acc19 = next(c for c in result["cards"] if c["cardId"] == "ACC-19")
-        self.assertEqual(acc19["data"], {})
-
-        # ACC-03 serialNo + uri（允许）
-        result = compose_result(
-            payload_for(
-                [
-                    section_item(
-                        "account_overview", "ACC-03", {"serialNo": "S1", "uri": "U1"}
-                    )
-                ],
-                "account_overview",
-            )
-        )
-        acc03 = next(c for c in result["cards"] if c["cardId"] == "ACC-03")
-        self.assertEqual(acc03["data"], {"serialNo": "S1", "uri": "U1"})
+        wrong_mapping = payload_for([business_item("ACC-01")], "account_overview")
+        wrong_mapping["businessItems"][0]["section"]["type"] = "holding_structure"
+        with self.assertRaisesRegex(CompositionError, "requires section.type"):
+            compose_result(wrong_mapping)
 
     def test_rejects_invalid_card_data(self) -> None:
-        # 默认卡非空 data 拒绝
         default_card = payload_for(
-            [section_item("account_overview", "ACC-01", {"x": 1})],
-            "account_overview",
+            [business_item("ACC-01", {"amount": "1"})], "account_overview"
         )
         with self.assertRaisesRegex(CompositionError, "must be empty"):
             compose_result(default_card)
 
-        # 身份参数拒绝
         identity = payload_for(
-            [
-                section_item(
-                    "return_attribution",
-                    "ACC-15",
-                    {"dateType": "Y1", "custNo": "X"},
-                )
-            ],
+            [business_item("ACC-15", {"dateType": "Y1", "custNo": "C1"})],
             "return_attribution",
         )
         with self.assertRaisesRegex(CompositionError, "identity param"):
             compose_result(identity)
 
-        # per-request 卡的非法键拒绝
-        bad_key = payload_for(
-            [
-                section_item(
-                    "return_attribution",
-                    "ACC-15",
-                    {"dateType": "Y1", "foo": "bar"},
-                )
-            ],
-            "return_attribution",
-        )
-        with self.assertRaisesRegex(CompositionError, "only allows"):
-            compose_result(bad_key)
-
-        # ACC-15 缺必填 dateType 拒绝
         missing = payload_for(
-            [section_item("return_attribution", "ACC-15")],
-            "return_attribution",
+            [business_item("ACC-15")], "return_attribution"
         )
         with self.assertRaisesRegex(CompositionError, "missing required"):
             compose_result(missing)
+
+        invalid = payload_for(
+            [business_item("ACC-15", {"dateType": "YEAR"})],
+            "return_attribution",
+        )
+        with self.assertRaisesRegex(CompositionError, "dateType is unsupported"):
+            compose_result(invalid)
+
+    def test_accepts_allowed_optional_card_params(self) -> None:
+        result = compose_result(
+            payload_for(
+                [business_item("ACC-19", {"productId": "P001"})],
+                "account_overview",
+            )
+        )
+        self.assertEqual(result["cards"][0]["data"], {"productId": "P001"})
+
+        result = compose_result(
+            payload_for(
+                [business_item("ACC-03", {"serialNo": "S1", "uri": "U1"})],
+                "account_overview",
+            )
+        )
+        self.assertEqual(
+            result["cards"][0]["data"], {"serialNo": "S1", "uri": "U1"}
+        )
+
+    def test_rejects_final_or_internal_fields_as_input(self) -> None:
+        payload = payload_for([business_item("ACC-01")], "account_overview")
+        payload["version"] = "2.2"
+        payload["originalQuery"] = "不应进入最终编排"
+        payload["cardPlans"] = []
+        with self.assertRaisesRegex(CompositionError, "unsupported fields"):
+            compose_result(payload)
+
+    def test_rejects_primary_intent_not_present_and_wrong_scene(self) -> None:
+        mismatch = payload_for(
+            [business_item("ACC-01")], "holding_structure"
+        )
+        with self.assertRaisesRegex(CompositionError, "must match"):
+            compose_result(mismatch)
+
+        wrong_scene = payload_for(
+            [business_item("ACC-01")], "account_overview"
+        )
+        wrong_scene["scene"] = "问基金"
+        with self.assertRaisesRegex(CompositionError, "scene must be 问账户"):
+            compose_result(wrong_scene)
+
+    def test_rejects_llm_extra_section_fields_and_empty_text(self) -> None:
+        extra = payload_for([business_item("ACC-01")], "account_overview")
+        extra["summary"]["type"] = "summary"
+        with self.assertRaisesRegex(CompositionError, "unsupported fields"):
+            compose_result(extra)
+
+        empty = copy.deepcopy(extra)
+        del empty["summary"]["type"]
+        empty["summary"]["narrative"] = ""
+        with self.assertRaisesRegex(CompositionError, "must be a non-empty"):
+            compose_result(empty)
 
 
 if __name__ == "__main__":

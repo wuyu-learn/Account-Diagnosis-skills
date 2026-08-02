@@ -2,7 +2,7 @@
 
 ## 文档定位
 
-本文档说明 AI 顾问系统的上层处理链路，以及账户诊断相关 Skills 在整体系统中的位置。账户诊断只是全局场景分发后的一个业务分支。
+本文档说明 AI 顾问系统的上层处理链路，以及账户诊断相关 Skills 在整体系统中的位置。账户诊断只是全局场景分发后的一个业务分支；进入账户域后的意图复杂度、卡片计划和任务调度规则见 [`AI 顾问账户路由.md`](./AI%20顾问账户路由.md)。
 
 ## 全局三段式流水线
 
@@ -18,6 +18,7 @@
 
 通过语义判断完成：
 
+- 原样保留用户当前问题为 `originalQuery`。
 - 识别一个或多个业务场景。
 - 将复合问题拆成可独立处理的 `subQuery`。
 - 为场景分配权重并确定主场景。
@@ -29,6 +30,7 @@
 
 ```json
 {
+  "originalQuery": "我都买了哪些产品，今年收益怎么样",
   "scenes": [
     {
       "scene": "问账户",
@@ -54,7 +56,7 @@
 }
 ```
 
-这里的 `isMultiScene` 表示是否命中多个全局业务场景，不表示一个业务域内部是否包含多个二级意图。上述问题虽然同时包含“持仓”和“收益”两个账户诉求，但都属于 `问账户`，因此 Global Phase A 仍输出一个场景；账户域收到请求后再拆分为 `holding_structure` 和 `return_performance`。
+`originalQuery` 必须逐字等于当前用户问题，用于保留拆分 `subQuery` 后仍需要的整体关系、指代和表达重点。这里的 `isMultiScene` 表示是否命中多个全局业务场景，不表示一个业务域内部是否包含多个二级意图。上述问题虽然同时包含“持仓”和“收益”两个账户诉求，但都属于 `问账户`，因此 Global Phase A 仍输出一个场景；账户域收到请求后再拆分为 `holding_structure` 和 `return_performance`。
 
 LLM 负责语义识别；代码负责补齐缺失值、规范字段、计算多场景标识及确认主场景。
 `orchestration` 是下游编排预留字段，在本阶段固定为 `null`；`clarify` 在本阶段固定为 `{ "needed": false, "question": null }`。
@@ -88,7 +90,7 @@ ${json串}
 
 - `${市场/基金产品/策略/账户/投教}` 表示本次分发的目标业务域。
 - `${json串}` 必须是 Global Phase A 生成的完整 JSON，不得只传目标场景的 `subQuery`，也不得重新生成或改写。
-- 子 Agent 从完整 JSON 的 `scenes[]` 中读取属于本业务域的记录，并保留 `entities`、`primaryScene`、`isMultiScene`、`orchestration` 和 `clarify` 作为上游上下文。
+- 子 Agent 从完整 JSON 的 `scenes[]` 中读取属于本业务域的记录，并读取不可改写的 `originalQuery`；其他全局字段仍作为上游上下文完整传入。
 - 同一业务域即使包含多个二级意图，也由该业务域子 Agent 在内部继续拆分，不由主 Agent 提前转换成业务域内部意图。
 
 问账户示例：
@@ -97,6 +99,7 @@ ${json串}
 帮我解析并处理和账户相关的问题：
 
 {
+  "originalQuery": "我都买了哪些产品，今年收益怎么样",
   "scenes": [
     {
       "scene": "问账户",
@@ -148,15 +151,11 @@ Global Phase B：场景分发
         ↓
 问账户业务分支
 └── account-diagnosis（账户总控入口）
-    ├── 账户意图识别模块
-    ├── 账户领域内部模块
-    │   ├── 资产总览
-    │   ├── 持仓结构
-    │   ├── 收益表现
-    │   ├── 收益归因
-    │   └── 自选基金估值
-    ├── 生成并归一化卡片计划
-    └── 编排并输出账户域最终 v2.2 响应
+    ├── LLM：识别账户意图、复杂度、卡片和参数
+    ├── 代码：校验计划并生成固定业务骨架
+    ├── simple：最少必要 MCP + Summary
+    ├── complex：诊断所需 MCP + Summary/Conclusion
+    └── 代码：合并、校验并输出账户域最终 v2.2 响应
         ↓
 账户域最终 v2.2 响应（version / meta / sections / cards / risk_warning / followUp）
 ```
@@ -165,11 +164,15 @@ Global Phase B：场景分发
 
 ```text
 Account Step 1：账户意图识别
-Account Step 2：卡片选择与计划归一化
-Account Step 3：账户域最终编排与 v2.2 输出
+Account Step 2：复杂度、卡片和参数规划
+Account Step 3：代码生成固定业务骨架
+Account Step 4：按复杂度生成诊断文字
+Account Step 5：代码合并、校验与 v2.2 输出
 ```
 
-账户内部不直接获取卡片业务数据。当前所有账户卡片输出为 `dataMode: "deferred"` 且 `data: {}`，由前端组件完成取数。Account Step 3 在账户域内部完成 `summary → 业务 section → conclusion` 的编排，并由 `account-diagnosis` 直接拼接、校验并输出最终的 v2.2 JSON（含 `version`、`meta`、`risk_warning`），不再依赖独立的 Global Phase C。跨业务域聚合不在当前账户域职责内。
+以上步骤只描述账户域在整体架构中的处理层级。具体如何识别简单或复杂任务、生成卡片计划，并分别调度简单 Summary 任务或复杂 Summary/Conclusion 任务，以 [`AI 顾问账户路由.md`](./AI%20顾问账户路由.md) 为准。
+
+账户内部不直接获取卡片业务数据。当前所有账户卡片输出为 `dataMode: "deferred"`；`data` 只承载该卡片协议允许的业务参数，无参数时为 `{}`，组件数据仍由前端取数。账户域的具体任务结构以 [`AI 顾问账户路由.md`](./AI%20顾问账户路由.md) 为准，最终响应结构以 [`AI顾问结果输出与组件编排.md`](./AI顾问结果输出与组件编排.md) 为准。最终结果由 `account-diagnosis` 直接拼接、校验并输出 v2.2 JSON（含 `version`、`meta`、`risk_warning`），不再依赖独立的 Global Phase C。跨业务域聚合不在当前账户域职责内。
 
 账户意图分为两个账户回答大类：账户诊断类（资产总览、持仓结构、收益表现、收益归因）和自选基金类（自选基金估值）。同一大类内的多个意图可在一次账户域结果中按固定业务顺序混排；当一次问账户分发同时包含两个大类的意图时，账户域只处理 `primaryAccountIntent` 所在大类，丢弃另一大类，不为被丢弃的大类生成 section 或卡片。
 
@@ -235,11 +238,13 @@ ACC-01 全账户
 - 账户诊断类卡片（ACC-01～ACC-15）与自选基金类卡片（ACC-18）不得出现在同一个账户域结果中；跨大类时按 `primaryAccountIntent` 所在大类取舍。
 - 卡片是前端组件声明，不负责提供数据。编排层不检查卡片是否已有接口或数据，只根据用户意图选择准确的卡片编号。
 
-账户意图和 `subQuery` 负责精确选择卡片编号，标准回复模板负责将选中的卡片组织成完整回答。单个子意图即使只命中一张卡片，也需要放入 `summary → 业务 section → conclusion` 的标准结构；复合问题只生成一个公共 `summary` 和一个公共 `conclusion`，中间按业务顺序编排各卡片。编排层不得重新判断意图、额外增加卡片或替换目标卡片，`section.cardId` 必须与上游选定的 `cardId` 一致。详细规则见 `documentation/AI顾问结果输出与组件编排.md`。
+账户意图和 `subQuery` 负责精确选择卡片编号，编排层不得重新判断意图、额外增加卡片或替换目标卡片，`section.cardId` 必须与上游选定的 `cardId` 一致。账户内部的复杂度判断和任务调度见 [`AI 顾问账户路由.md`](./AI%20顾问账户路由.md)，卡片编排和最终结果结构见 [`AI顾问结果输出与组件编排.md`](./AI顾问结果输出与组件编排.md)。
 
 <br />
 
 ## LLM 与代码的职责
+
+本节只定义全局层面的通用职责；账户域内部如何根据任务复杂度调度代码和大模型，以 [`AI 顾问账户路由.md`](./AI%20顾问账户路由.md) 为准。
 
 适合由 LLM 完成：
 

@@ -1,44 +1,54 @@
 ---
 name: account-diagnosis
-description: "处理主 Agent 分发的问账户任务：从固定会话文本中读取完整 Route Extract JSON，识别账户二级意图，精确选择 deferred 账户卡片，按最小数据需求调用账户 MCP 生成 Summary 和 Conclusion，并直接输出账户域的最终 v2.2 JSON（含 version、meta、risk_warning）。分发目标为账户，或完整路由中包含 scene = 问账户时使用。"
+description: "处理主 Agent 分发的问账户任务：保留原始用户问题，识别账户意图和任务复杂度，规划 deferred 卡片及业务参数，用代码生成固定业务骨架，按 simple/complex 调用最少必要 MCP 生成 Summary 或诊断型 Summary/Conclusion，并输出固定 v2.2 JSON。分发输入包含 scene = 问账户，或用户要求查看账户资产、持仓、收益、归因、账户诊断或自选基金时使用。"
 ---
 
 # Account Diagnosis
 
-作为 Global Phase B 的“问账户”业务域入口。当前没有独立 Global Phase C 封装组件，账户域直接输出最终 v2.2 JSON（含 version、meta、risk_warning），但仍不负责跨业务域聚合。
+作为 Global Phase B 的“问账户”业务域入口。直接输出账户域最终 v2.2 JSON，不负责跨业务域聚合。
 
-Skill 独立部署并自包含，只使用本目录中的 `SKILL.md`、`references/`、`scripts/` 和 `agents/`，不得依赖目录外文件。
+保持 Skill 独立、自包含。只使用本目录的 `SKILL.md`、`references/`、`scripts/` 和 `agents/`。
 
-## 内部资源
+## 账户顾问的工作立场
+
+本 Skill 的职责是帮助用户看清账户，而不只是展示账户数据。
+
+- 不只播报数据：说明已验证事实与用户当前问题的关系；
+- 不承担产品销售：不把账户诊断导向产品推荐；
+- 不替用户决策：缺少 KYC、投资目标和风险承受能力时，不给出适配性、买卖或调仓结论；
+- simple 直接回答局部问题，不扩大为账户整体评价；
+- complex 从组合视角建立结构、表现和归因之间的关系，并指出最值得关注的问题；
+- 数据不足时明确判断边界，不用推测填补证据；
+- 表达保持清楚、克制、有依据，既不制造焦虑，也不回避已经发现的问题；
+- `followUp` 只提供可选的继续诊断方向，不替用户作决定。
+
+## 资源
 
 ```text
-references/account-intent-router.md       账户二级意图
-references/account-asset-overview.md      资产总览选卡
-references/account-holding-structure.md   持仓结构选卡
-references/account-return-performance.md  收益表现选卡
-references/account-return-attribution.md  收益归因选卡
-references/account-watchlist-valuation.md 自选基金选卡
-references/mcp-summary-conclusion.md       MCP 摘要证据
-references/result-composer.md              最终结果编排
-scripts/build_dispatch_plan.py             模块调度校验
-scripts/compose_result.py                   最终结果校验
+references/account-route-planner.md  账户意图、复杂度和卡片计划
+references/account-card-routing.md   单卡、卡片组合和业务参数
+references/mcp-evidence.md           MCP 能力、数据质量和证据边界
+references/simple-summary.md         simple Summary 任务
+references/complex-diagnosis.md      complex 账户诊断任务
+references/result-composer.md        最终合并协议
+scripts/build_result_skeleton.py     固定业务骨架生成与计划校验
+scripts/compose_result.py             最终 v2.2 合并与校验
 ```
 
-按步骤完整读取被引用的文件。`references/` 文件不是独立 Skill。
+按工作流完整读取指定 reference。不要把 references 当作独立 Skill。
 
-## 上游输入协议
+## 上游输入
 
-主 Agent 使用固定会话格式分发：
+接收主 Agent 传入的完整 Route Extract JSON：
 
-```text
-帮我解析并处理和账户相关的问题：
-
+```json
 {
+  "originalQuery": "我今年收益怎么样",
   "scenes": [
     {
       "scene": "问账户",
-      "weight": 0.9,
-      "subQuery": "我都买了哪些产品，今年收益怎么样"
+      "weight": 0.95,
+      "subQuery": "我今年收益怎么样"
     }
   ],
   "entities": {
@@ -59,167 +69,128 @@ scripts/compose_result.py                   最终结果校验
 }
 ```
 
-处理规则：
+执行以下约束：
 
-1. 将固定引导文本视为分发指令，不作为用户问题或 `subQuery`。
-2. 提取引导文本之后唯一的完整 JSON 对象，作为 Route Extract 结果。
-3. JSON 根级直接是 `scenes`、`entities`、`primaryScene`、`isMultiScene`、`orchestration` 和 `clarify`；不得要求或生成 `routeResult` 包装层。
-4. 不重新生成、改写或裁剪 Route Extract JSON。
-5. 处理全部 `scenes[].scene = "问账户"` 的记录，忽略其他业务场景；不以 `primaryScene` 为唯一执行条件。
-6. `isMultiScene` 表示全局业务场景数量。一个 `问账户` 场景可以在账户域内部继续拆分为多个账户意图。
-
-`requestContext`、`risk_warning` 和 `debug` 不属于该上游 JSON：
-
-- 身份、会话和鉴权只能来自可信运行时或 MCP 连接，不得从用户文本或业务实体推断。
-- 运行时未提供 MCP 所需可信上下文时，不猜测参数，按数据降级继续编排卡片。
-- 最终响应的 `version`、`meta` 和 `risk_warning` 由 `compose_result.py` 在输出阶段补齐（当前无独立 Phase C）。
-- 标准账户域输出不包含调试数据、MCP 原始结果或身份信息。
+- 将 `originalQuery` 视为可信上游原样透传的用户问题，禁止改写；
+- 处理全部 `scenes[].scene = "问账户"` 的记录，不以 `primaryScene` 为唯一条件；
+- 保留完整上游输入，不重新生成、裁剪或包装为 `routeResult`；
+- `isMultiScene` 只表示全局场景数量，不表示账户任务复杂度；
+- 身份、会话和鉴权只从可信运行时或 MCP 连接取得；
+- 没有问账户记录、缺少 `originalQuery` 或输入结构非法时停止并返回结构错误。
 
 ## 工作流
 
-### 1. 识别账户意图
+### 1. 生成账户计划
 
-完整读取 `references/account-intent-router.md`，把提取出的原始 Route Extract JSON 直接交给该模块。
+完整读取：
 
-输出：
+```text
+references/account-route-planner.md
+references/account-card-routing.md
+```
+
+基于 `originalQuery`、问账户 scenes 和 entities 输出内部计划：
 
 ```json
 {
+  "taskComplexity": "simple",
+  "complexityReason": "用户只询问本年收益",
+  "primaryAccountIntent": "return_performance",
   "accountScenes": [],
-  "primaryAccountIntent": null,
-  "isMultiAccountIntent": false
+  "cardPlans": []
 }
 ```
 
-只允许五个账户意图：
+由 LLM 决定复杂度，并严格根据 `account-card-routing.md` 生成卡片编号、组合和 `params`。不要在其他位置创造组合规则，也不要输出卡片信封、Section 或 MCP 计划。
 
-```text
-account_overview
-holding_structure
-return_performance
-return_attribution
-watchlist_valuation
-```
+### 2. 代码生成固定业务骨架
 
-如果完整路由中没有 `问账户` 场景，停止账户业务处理并向主 Agent 返回结构错误，不生成卡片或业务结论。
-
-### 2. 生成模块执行计划
-
-将账户意图结果和原始 `entities` 传给：
+把账户计划传给：
 
 ```bash
-python3 scripts/build_dispatch_plan.py --input dispatch-input.json
+python3 scripts/build_result_skeleton.py --input account-plan.json
 ```
 
-脚本输入：
+脚本负责：
 
-```json
-{
-  "accountIntentResult": {},
-  "entities": {}
-}
-```
+- 校验复杂度、账户意图、卡片和参数；
+- 生成 `dataMode: "deferred"` 和卡片 `data`；
+- 生成业务 Section 类型、标题和固定 narrative；
+- 按固定业务顺序排序；
+- 阻止重复卡片和账户诊断/自选基金混排。
 
-- 调度计划和选卡模块不得接收 `requestContext`。
-- 只保留 `fund_names`、`fund_codes`、`manager_names`、`company_names`、`market_subjects` 和 `strategy_names` 六类字符串数组。
-- 忽略其他实体键，拒绝允许数组中的非字符串元素。
+脚本失败时修正账户计划并重试。不得绕过脚本手工生成业务骨架。
 
-### 3. 精确选择卡片
+### 3. 按复杂度生成文字
 
-按执行计划完整读取对应模块：
+所有任务先完整读取 `references/mcp-evidence.md`。卡片计划和 MCP 计划相互独立，不按卡片逐张调用 MCP。
+
+#### simple
+
+完整读取 `references/simple-summary.md`：
 
 ```text
-account_overview      → references/account-asset-overview.md
-holding_structure     → references/account-holding-structure.md
-return_performance    → references/account-return-performance.md
-return_attribution    → references/account-return-attribution.md
-watchlist_valuation   → references/account-watchlist-valuation.md
+选择最少必要 MCP
+→ 说明事实与当前问题的关系
+→ 生成一个 Summary
+→ 不生成 Conclusion
 ```
 
-每个模块只根据当前 `intent`、`subQuery` 和实体选卡。不得根据接口记录、数据状态或取数能力改变目标卡片。
+#### complex
 
-### 4. 归一化卡片计划
-
-所有账户卡片固定为：
-
-```json
-{
-  "cardId": "ACC-01",
-  "dataMode": "deferred",
-  "data": {}
-}
-```
-
-约束：
-
-- 合法卡片为 ACC-01～ACC-12、ACC-13-A、ACC-13-B、ACC-14、ACC-15、ACC-18、ACC-19，共 18 张。
-- ACC-16、ACC-17 不得生成。
-- 卡片只保留 `cardId`、`dataMode` 和 `data`。
-- `data` 默认为空对象；只有需要 per-request 业务入参的卡片才在 `data` 中平铺业务参数（ACC-15 必填 `dateType`，ACC-19 可填 `productId`，ACC-03/05/06/08/10 可填 `serialNo`+`uri`）；`data` 不得携带 `custNo`、`accountName` 等身份参数。不输出 `inline`、`dataQuery` 或组件数据。
-- 不因卡片没有接口记录或当前无数据而停止编排。
-
-### 5. 规划 MCP 摘要数据
-
-完整读取 `references/mcp-summary-conclusion.md`。
+完整读取 `references/complex-diagnosis.md`，先区分完整账户诊断和关系型诊断，据此选择所需 MCP。MCP 返回并完成数据质量检查后，在生成文案前应用该 reference 的“复杂诊断注入块”：
 
 ```text
-卡片计划 → 决定前端展示哪些 deferred 组件
-MCP 计划  → 为 Summary 和 Conclusion 提供最少必要的真实数据
+输入 originalQuery、账户计划和已校验证据
+→ 分析组合结构、收益质量和收益来源
+→ 形成有证据的跨维度关系，或明确关系无法建立
+→ 确定一至三个关注点及优先级
+→ 生成一个 Summary 和一个 Conclusion
 ```
 
-1. 先确定用户希望 Summary 和 Conclusion 回答什么。
-2. 只调用形成核心回答所必需的 MCP，不为每张卡片逐一调用。
-3. 工具参数严格服从运行时 Schema 和可信运行时上下文。
-4. MCP 数据只用于 Summary 和 Conclusion，不写入卡片 `data`。
-5. MCP 失败、无数据、缺少可信上下文或无法校验时，不生成数据判断，但继续输出 deferred 卡片。
+只使用本次 MCP 实际返回且校验通过的证据。不得使用 deferred 卡片尚未加载的数据。
 
-### 6. 编排账户域最终结果
+### 4. 合并最终结果
 
-完整读取 `references/result-composer.md`，按固定业务顺序构造编排项：
+完整读取 `references/result-composer.md`。
 
-```text
-summary
-→ account_overview
-→ holding_structure
-→ return_performance
-→ return_attribution
-→ watchlist_valuation
-→ conclusion
-```
-
-只输出实际命中的业务 Section。同一类型命中多张卡片时保持卡片计划原始顺序。
-
-- `summary` 使用实际 MCP 数据直接回应账户问题。
-- `conclusion` 原则上复用同一批 MCP 数据。
-- 业务 Section 只说明 deferred 卡片将展示什么，不重复 MCP 分析。
-- 每张卡片对应一个业务 Section。
-- 一次账户域结果只有一个 `summary` 和一个 `conclusion`，两者不关联卡片。
-
-将规范化编排项传给：
+将固定 `businessItems` 与文字任务结果合并为 `compose-input.json`，调用：
 
 ```bash
-python3 scripts/compose_result.py --input normalized-input.json
+python3 scripts/compose_result.py --input compose-input.json
 ```
 
-脚本输入：
+只输出脚本生成的最终 JSON。脚本失败时修正输入并重试，不得手工绕过校验。
 
-```json
-{
-  "scene": "问账户",
-  "primaryAccountIntent": "holding_structure",
-  "items": [],
-  "followUp": []
-}
-```
+## 失败与降级
 
-脚本输出最终 v2.2 JSON：
+以下错误必须停止：
+
+- 上游输入缺少原始问题或问账户场景；
+- Planner 输出非法复杂度、意图、卡片或参数；
+- 卡片重复、跨回答大类混排或固定业务骨架被修改；
+- simple 携带 Conclusion；
+- complex 缺少 Conclusion；
+- 最终编排脚本校验失败。
+
+以下数据问题不删除卡片：
+
+- MCP 不可用、失败、空数据或部分可用；
+- 缺少可信身份或账户上下文；
+- 卡片没有已登记接口或前端尚未取数。
+
+数据不足时只降低文字判断范围。simple 仍不生成 Conclusion；complex 使用 Conclusion 明确无法形成的账户级判断。
+
+## 最终输出
+
+成功时只输出固定 v2.2 JSON：
 
 ```json
 {
   "version": "2.2",
   "meta": {
     "scene": "问账户",
-    "intent": "holding_structure"
+    "intent": "return_performance"
   },
   "sections": [],
   "cards": [],
@@ -228,33 +199,4 @@ python3 scripts/compose_result.py --input normalized-input.json
 }
 ```
 
-`compose_result.py` 在输出阶段补齐 `version`、`meta`（`scene` 固定为“问账户”，`intent` 取自 `primaryAccountIntent`）和 `risk_warning`（代码注入的固定默认值，待合规来源接入后替换）。不得输出 Route Extract 原文、MCP 计划或 MCP 原始结果。账户域仍不负责跨业务域聚合。
-
-## 失败与降级
-
-以下结构错误必须停止：
-
-- 分发消息中没有唯一、合法的 Route Extract JSON。
-- 路由中没有 `问账户` 场景。
-- 内部模块不存在或输出不是合法 JSON。
-- intent、cardId、Section 类型、顺序或字段不符合协议。
-- cardId 重复、越界或与 Section 类型不匹配。
-- 卡片不是 deferred，或 `data` 不是空对象。
-- Summary/Conclusion 缺失、重复或顺序错误。
-- 结果校验脚本失败。
-
-以下数据问题不得删除卡片或停止卡片编排：
-
-- MCP 不可用、调用失败、返回空数据或部分数据。
-- 运行时没有提供 MCP 所需的可信身份或账户上下文。
-- 卡片没有已登记接口，或前端组件尚未取数。
-
-数据降级时：
-
-- `summary` 只说明当前无法取得核心回答所需的数据。
-- `conclusion` 只说明暂不作判断，并给出可重试或继续查看的方向。
-- 不得用 deferred 卡片尚未加载的数据补写摘要或结论。
-
-## 输出约束
-
-成功时只输出 `scripts/compose_result.py` 生成的最终 v2.2 JSON。不要添加 Markdown 代码围栏、解释文字或调试信息。
+顶层只能包含上述六个字段。不得输出 `originalQuery`、`taskComplexity`、账户计划、MCP 原始数据、身份信息、Markdown 代码围栏或解释文字。

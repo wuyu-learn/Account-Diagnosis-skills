@@ -93,7 +93,7 @@
 ### MCP 的用途与边界
 
 - MCP 数据主要用于生成有真实数据依据的 `summary`，以及复杂任务的 `conclusion`。
-- 账户卡片仍统一输出为 `deferred`，由前端组件自行取数；MCP 返回值不写入 `cards[].data`。
+- 账户卡片仍统一输出为 `deferred`，由前端组件自行取数；MCP 返回值不写入 `cards[].data`。唯一例外是 ACC-03/05/06/08/10 的 `serialNo`/`uri`——这两项是份额定位标识而非分析数据，当用户指定到某个具体份额时，可把明细 MCP（如 `queryHoldingDetail`）匹配出的那一笔 `serialNo`/`uri` 写入对应 deferred 卡片 `data`，前端据此取数；其余 MCP 字段仍不入卡。
 - MCP 调用计划与卡片计划相互独立，不要求一张卡片对应一次 MCP 调用。
 - 不得因为选中某张卡片就自动调用其相关 MCP；只根据 `summary`，以及复杂任务 `conclusion` 的最小数据需求选择必要工具。
 - 业务 section 只说明 deferred 卡片将展示的内容，不使用未调用 MCP、未返回或无法验证的数据生成分析判断。
@@ -407,6 +407,37 @@ ACC-15 收益归因没有固定 `dateType` 默认值，必须**根据用户意�
   }
 }
 ```
+
+## 单笔持仓定位（serialNo / uri）
+
+ACC-03、ACC-05、ACC-06、ACC-08、ACC-10 是份额级卡片：用户查"某个产品的某个具体份额"。`serialNo`/`uri` 用于把 deferred 卡片定位到那一笔份额。份额是人工定义的单位，比渠道更细——同一渠道（如定投计划）下可能有多笔份额；每一笔份额在 `queryHoldingDetail`（`/holding-detail`）等明细接口的 `itemList[]` 里各自带 `serialNo`、`uri` 及所属渠道标识（`groupNo`/`groupName`；字段与"渠道/份额"的对应待联调确认）。
+
+与 ACC-19 的区别：ACC-19 是产品级（`productId` 定位产品，展示该产品的份额明细）；ACC-03 等是份额级（`serialNo`/`uri` 定位某一笔具体份额）。问产品用 ACC-19，问具体份额用 ACC-03 等。
+
+用户指定到某个具体份额时，取数路径为：
+
+```text
+queryHoldingDetail（持仓明细）
+→ 取得该产品按份额拆开的各笔，每笔带 serialNo/uri + 渠道标识
+→ 按用户指定的份额匹配到那一笔
+→ 取出该笔 serialNo/uri 写入卡片 data
+```
+
+写入示例：
+
+```json
+{
+  "cardId": "ACC-03",
+  "dataMode": "deferred",
+  "data": { "serialNo": "...", "uri": "..." }
+}
+```
+
+要点：
+
+- `serialNo`/`uri` 是份额定位标识，不是分析数据；除这两项外，明细 MCP 的其余返回字段仍不写入 `cards[].data`。
+- 份额匹配由语义完成（用户说的份额/渠道 → 对应字段）；份额比渠道细，只给渠道可能命中多笔份额，需进一步消歧，消歧字段待联调确认。
+- 明细 MCP 未返回、未命中或不可用时，卡片保留，`data` 不填，文字如实说明。
 
 ## 数据状态
 

@@ -32,6 +32,7 @@ references/simple-summary.md         simple Summary 任务
 references/complex-diagnosis.md      complex 账户诊断任务
 references/result-composer.md        最终合并协议
 scripts/build_result_skeleton.py     固定业务骨架生成与计划校验
+scripts/enrich_share_identifiers.py  份额级 serialNo/uri 回填
 scripts/compose_result.py             最终 v2.2 合并与校验
 ```
 
@@ -150,11 +151,31 @@ python3 scripts/build_result_skeleton.py --input account-plan.json
 
 只使用本次 MCP 实际返回且校验通过的证据。不得使用 deferred 卡片尚未加载的数据。
 
-### 4. 合并最终结果
+### 4. 份额标识回填
+
+当 `cardPlans` 含份额级卡片（ACC-03/05/06/08/10）且用户指定了某个具体份额时，在 MCP 取数后、合并前把匹配份额的 `serialNo`/`uri` 注入对应 deferred 卡片 `data`。
+
+份额匹配在大模型任务中完成：读取 `queryHoldingDetail` 等明细 MCP 结果，按用户指定的份额（如定投计划某笔）匹配到那一笔，输出 `shareBindings`：
+
+```json
+[
+  { "cardId": "ACC-03", "serialNo": "...", "uri": "..." }
+]
+```
+
+把 `build_result_skeleton.py` 的 `businessItems` 与 `shareBindings` 合并为 `enrich-input.json`，调用：
+
+```bash
+python3 scripts/enrich_share_identifiers.py --input enrich-input.json
+```
+
+脚本只做确定性注入与校验：仅接受份额级 `cardId`，要求 `serialNo`/`uri` 为非空字符串，拒绝身份字段和重复绑定。未命中份额、未指定具体份额或 MCP 不可用时 `shareBindings` 为空，卡片保留、`data` 不填。规则见 `references/account-card-routing.md` 份额级填值和 `references/mcp-evidence.md`。
+
+### 5. 合并最终结果
 
 完整读取 `references/result-composer.md`。
 
-将固定 `businessItems` 与文字任务结果合并为 `compose-input.json`，调用：
+将回填后的 `businessItems` 与文字任务结果合并为 `compose-input.json`，调用：
 
 ```bash
 python3 scripts/compose_result.py --input compose-input.json

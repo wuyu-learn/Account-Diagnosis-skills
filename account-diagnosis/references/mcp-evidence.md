@@ -68,7 +68,7 @@ unavailable 调用失败、空数据、缺少上下文或无法校验
 
 ## 边界
 
-- MCP 数据不写入 `cards[].data`；
+- MCP 数据不写入 `cards[].data`；唯一例外是 ACC-03/05/06/08/10 的 `serialNo`/`uri`——这两项是份额定位标识而非分析数据，由份额匹配步骤从 `queryHoldingDetail` 等明细 MCP 取出后注入对应 deferred 卡片（见 `account-card-routing.md`），其余 MCP 字段仍不入卡；
 - 不向外输出 MCP 计划、原始请求、原始响应或身份信息；
 - `custNo`、`accountName`、会话和鉴权只来自可信运行时；
 - 缺少可信上下文时不得猜测；

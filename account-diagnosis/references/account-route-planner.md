@@ -49,6 +49,7 @@
 - 处理全部 `scenes[].scene = "问账户"` 的记录，忽略其他业务域；
 - `primaryScene` 和 `isMultiScene` 是全局路由信息，不表示账户任务复杂度；
 - 保留六类 `entities`，只使用用户明确提供的实体；
+- ACC-19 `productId` 是产品代码（不是基金代码），上游/实体已提供时透传（规则见 `account-card-routing.md` 参数边界）；`serialNo`/`uri` 不在 plan 阶段填，属份额级，由 MCP 后回填步骤处理；
 - 没有问账户记录时返回结构错误，不生成账户计划。
 
 ## 账户意图

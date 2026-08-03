@@ -171,15 +171,15 @@ summary
 | --- | --- | --- |
 | 未指定账户类型，询问总资产、钱的构成或账户整体情况 | ACC-01 | `account_overview` |
 | 询问基金账户整体、收益或账户内产品 | ACC-02 | `account_overview` |
-| 询问指定基金的整体持有情况 | ACC-03 | `account_overview` |
-| 询问指定产品的份额明细 | ACC-19 | `account_overview` |
+| 询问指定基金的某个具体份额（如定投计划某笔）的详情 | ACC-03 | `account_overview` |
+| 询问某个产品（基金/投顾/货币/专户等）的份额明细 | ACC-19 | `account_overview` |
 | 询问投顾账户整体、组合数量或账户收益 | ACC-04 | `account_overview` |
-| 询问指定投顾组合的整体、收益或组合持仓 | ACC-05 | `account_overview` |
-| 询问指定投顾组合的调仓记录 | ACC-06 | `account_overview` |
+| 询问指定投顾组合的某个具体份额的详情 | ACC-05 | `account_overview` |
+| 询问指定投顾组合某个具体份额的调仓记录 | ACC-06 | `account_overview` |
 | 询问货币账户、货币基金账户或现金宝整体情况 | ACC-07 | `account_overview` |
-| 询问指定货币基金的持有情况 | ACC-08 | `account_overview` |
+| 询问指定货币基金的某个具体份额的详情 | ACC-08 | `account_overview` |
 | 询问专户账户整体情况 | ACC-09 | `account_overview` |
-| 询问指定专户产品的持有情况 | ACC-10 | `account_overview` |
+| 询问指定专户产品的某个具体份额的详情 | ACC-10 | `account_overview` |
 
 #### 持仓结构
 
@@ -308,7 +308,7 @@ summary = 查询范围 + 1～3 个关键 MCP 事实 + 直接回答
 
 - 业务 section 关联 deferred 卡片，只说明卡片将展示的内容。
 - MCP 数据默认只用于 `summary` 和复杂任务的 `conclusion`，不要求在每个业务 section 中重复分析。
-- MCP 返回值不写入 `cards[].data`，卡片仍由前端组件自行取数。
+- MCP 返回值不写入 `cards[].data`，卡片仍由前端组件自行取数；唯一例外是 ACC-03/05/06/08/10 的 `serialNo`/`uri`（份额定位标识），用户指定某个具体份额时可把明细 MCP 匹配出的 `serialNo`/`uri` 写入对应卡片 `data`，详见 `AI顾问账户卡片与数据.md`。
 - MCP 与前端卡片应使用一致的用户、账户范围、时间范围和业务口径。
 
 #### 失败与数据不足

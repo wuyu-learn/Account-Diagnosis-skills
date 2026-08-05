@@ -1,6 +1,6 @@
 ---
 name: account-diagnosis
-description: "处理主 Agent 分发的问账户任务：保留原始用户问题，识别账户意图和任务复杂度，规划 deferred 卡片及业务参数，用代码生成固定业务骨架，按 simple/complex 调用最少必要 MCP 生成 Summary 或诊断型 Summary/Conclusion，并输出固定 v2.2 JSON。分发输入包含 scene = 问账户，或用户要求查看账户资产、持仓、收益、归因、账户诊断或自选基金时使用。"
+description: "处理主 Agent 分发的问账户任务：代码判定 summary_only/diagnostic，模型只规划意图、deferred 卡片和参数，调用最少必要 MCP 后由主路径脚本一次生成固定 v2.2 JSON；同时保留隔离的卡片测试路径。"
 ---
 
 # Account Diagnosis
@@ -16,8 +16,8 @@ description: "处理主 Agent 分发的问账户任务：保留原始用户问�
 - 不只播报数据：说明已验证事实与用户当前问题的关系；
 - 不承担产品销售：不把账户诊断导向产品推荐；
 - 不替用户决策：缺少 KYC、投资目标和风险承受能力时，不给出适配性、买卖或调仓结论；
-- simple 直接回答局部问题，不扩大为账户整体评价；
-- complex 从组合视角建立结构、表现和归因之间的关系，并指出最值得关注的问题；
+- `summary_only` 直接回答事实问题，不扩大为账户整体评价；
+- `diagnostic` 从组合视角建立结构、表现和归因之间的关系，并指出最值得关注的问题；
 - 数据不足时明确判断边界，不用推测填补证据；
 - 表达保持清楚、克制、有依据，既不制造焦虑，也不回避已经发现的问题；
 - `followUp` 只提供可选的继续诊断方向，不替用户作决定。
@@ -25,21 +25,19 @@ description: "处理主 Agent 分发的问账户任务：保留原始用户问�
 ## 资源
 
 ```text
-references/account-route-planner.md  账户意图、复杂度和卡片计划
-references/account-card-routing.md   单卡、卡片组合和业务参数
-references/mcp-evidence.md           MCP 能力、数据质量和证据边界
-references/simple-summary.md         simple Summary 任务
-references/complex-diagnosis.md      complex 账户诊断任务
-references/result-composer.md        最终合并协议
+references/main-path.md              常规主路径唯一运行协议
+references/complex-diagnosis.md      diagnostic 诊断规则（按需读取）
 references/card-test-mode.md         测试模式 runbook（可移除）
-scripts/normalize_input.py           上游输入适配与字段标准化
+scripts/main_pipeline.py             常规路径 prepare/finalize
+scripts/normalize_input.py           共享输入标准化（测试路径继续直接使用）
 scripts/build_result_skeleton.py     固定业务骨架生成与计划校验
-scripts/enrich_share_identifiers.py  份额级 serialNo/uri 回填
+scripts/enrich_share_identifiers.py  常规路径唯一份额候选回填
 scripts/compose_result.py             最终 v2.2 合并与校验
 scripts/test_mode/                    测试模式隔离链路（可移除）
 ```
 
-按工作流完整读取指定 reference。不要把 references 当作独立 Skill。
+常规路径只读取 `references/main-path.md`；仅当代码返回 `diagnostic` 时再读取
+`references/complex-diagnosis.md`。不要读取已删除的旧分步 reference。
 
 ## 上游输入
 
@@ -84,15 +82,22 @@ scripts/test_mode/                    测试模式隔离链路（可移除）
 
 ## 工作流
 
-### 0. 输入适配
+### 0. 常规入口准备
 
-账户域入口首先读取上游输入并调用：
+常规路径首先调用统一 prepare：
 
 ```bash
-python3 scripts/normalize_input.py --input upstream.json --output route-extract.json
+python3 scripts/main_pipeline.py prepare --input upstream.json --output prepared.json
 ```
 
-`normalize_input.py` 负责：
+prepare 一次完成输入标准化、测试前缀识别和常规路径
+`responseMode` 判定。它输出 `routeExtract`、`testMode` 以及常规路径的
+`responseMode`。
+
+若上游已严格提供标准 Route Extract，仍调用 prepare 以取得代码判定的
+`responseMode`；OpenClaw 不得自行生成或覆盖该字段。
+
+prepare 内部复用 `normalize_input.py`，并继续保证：
 
 - 将非 JSON 文本（如用户原始问题字符串）转换为标准 Route Extract；
 - 补齐缺失的 `originalQuery`（从 `scenes[].subQuery` 派生）；
@@ -100,11 +105,12 @@ python3 scripts/normalize_input.py --input upstream.json --output route-extract.
 - 为缺失的 `primaryScene`、`isMultiScene`、`orchestration`、`clarify` 填充默认值；
 - 当输入没有任何 `scene = 问账户` 或无法得到 `originalQuery` 时返回结构错误。
 
-适配不改变 `originalQuery` 语义，不重新解释用户问题。下游 Planner 和脚本只读取标准 Route Extract。
+适配不改变 `originalQuery` 语义。当 `testMode=false` 时进入常规步骤 1；
+当 `testMode=true` 时仍转入下方既有测试链路，不使用主路径 finalize。
 
 ### 0.5 测试模式（可移除）
 
-在输入适配之后、生成账户计划之前，先运行测试模式拦截器：
+仅当 prepare 输出 `testMode=true` 时，继续运行既有测试模式拦截器：
 
 ```bash
 python3 scripts/test_mode/interceptor.py --input route-extract.json --output test-mode-signal.json
@@ -129,115 +135,71 @@ interceptor.py → build_result_skeleton.py → enrich_test_cards.py → compose
 
 ### 1. 生成账户计划
 
-完整读取：
-
-```text
-references/account-route-planner.md
-references/account-card-routing.md
-```
-
-基于已适配的 `originalQuery`、问账户 scenes 和 entities 输出内部计划：
+完整读取常规路径唯一协议 `references/main-path.md`。基于
+`prepared.json.routeExtract` 只输出三个字段：
 
 ```json
 {
-  "taskComplexity": "simple",
-  "complexityReason": "用户只询问本年收益",
   "primaryAccountIntent": "return_performance",
   "accountScenes": [],
   "cardPlans": []
 }
 ```
 
-由 LLM 决定复杂度，并严格根据 `account-card-routing.md` 生成卡片编号、组合和 `params`。不要在其他位置创造组合规则，也不要输出卡片信封、Section 或 MCP 计划。
+不得输出 `responseMode`、`taskComplexity`、`complexityReason`、Section、
+MCP 计划或最终信封。模式、复杂度和固定字段全由代码负责。
 
-### 2. 代码生成固定业务骨架
+### 2. 取证并一次生成文字
 
-把账户计划传给：
+按 `main-path.md` 选择最少必要 MCP，不按卡片逐张调用。互不依赖的
+MCP 尽量在同一工具批次发出。
+
+- `responseMode=summary_only`：生成 `summaryNarrative`，禁止 Conclusion；
+- `responseMode=diagnostic`：取数前完整读取 `complex-diagnosis.md`，完成数据质量检查后
+  在同一次模型输出中生成 `summaryNarrative` 和
+  `conclusionNarrative`。
+
+只使用本次 MCP 实际返回且校验通过的证据；不得使用 deferred
+卡片未加载的数据。`followUp` 默认为空数组。
+
+### 3. 一次生成最终 JSON
+
+将 `routeExtract`、三字段账户计划、文字载荷和可选 `shareBindings`
+写入 `finalize.json`，调用：
 
 ```bash
-python3 scripts/build_result_skeleton.py --input account-plan.json
+python3 scripts/main_pipeline.py finalize --input finalize.json --output result.json
 ```
 
-脚本负责：
-
-- 校验复杂度、账户意图、卡片和参数；
-- 生成 `dataMode: "deferred"` 和卡片 `data`；
-- 生成业务 Section 类型、标题和固定 narrative；
-- 按固定业务顺序排序；
-- 阻止重复卡片和账户诊断/自选基金混排。
-
-脚本失败时修正账户计划并重试。不得绕过脚本手工生成业务骨架。
-
-### 3. 按复杂度生成文字
-
-所有任务先完整读取 `references/mcp-evidence.md`。卡片计划和 MCP 计划相互独立，不按卡片逐张调用 MCP。
-
-#### simple
-
-完整读取 `references/simple-summary.md`：
-
-```text
-选择最少必要 MCP
-→ 说明事实与当前问题的关系
-→ 生成一个 Summary
-→ 不生成 Conclusion
-```
-
-#### complex
-
-完整读取 `references/complex-diagnosis.md`，先区分完整账户诊断和关系型诊断，据此选择所需 MCP。MCP 返回并完成数据质量检查后，在生成文案前应用该 reference 的“复杂诊断注入块”：
-
-```text
-输入 originalQuery、账户计划和已校验证据
-→ 分析组合结构、收益质量和收益来源
-→ 形成有证据的跨维度关系，或明确关系无法建立
-→ 确定一至三个关注点及优先级
-→ 生成一个 Summary 和一个 Conclusion
-```
-
-只使用本次 MCP 实际返回且校验通过的证据。不得使用 deferred 卡片尚未加载的数据。
-
-### 4. 份额标识回填
-
-当 `cardPlans` 含份额级卡片（ACC-03/05/06/08/10）且用户指定了某个具体份额时，在 MCP 取数后、合并前把匹配份额的 `serialNo`/`uri` 注入对应 deferred 卡片 `data`。
-
-份额匹配在大模型任务中完成：读取 `queryHoldingDetail` 等明细 MCP 结果，按用户指定的份额（如定投计划某笔）匹配到那一笔，输出 `shareBindings`：
+常规份额候选格式：
 
 ```json
 [
-  { "cardId": "ACC-03", "serialNo": "...", "uri": "..." }
+  {
+    "cardId": "ACC-03",
+    "productId": "P001",
+    "balanceSerialNo": "S001",
+    "uri": "..."
+  }
 ]
 ```
 
-把 `build_result_skeleton.py` 的 `businessItems` 与 `shareBindings` 合并为 `enrich-input.json`，调用：
+同一 cardId 只有一个且 `balanceSerialNo`/`uri` 完整时才回填；多个候选一律
+视为有歧义并保留空 data。常规路径不随机选份额。
 
-```bash
-python3 scripts/enrich_share_identifiers.py --input enrich-input.json
-```
-
-脚本只做确定性注入与校验：仅接受份额级 `cardId`，要求 `serialNo`/`uri` 为非空字符串，拒绝身份字段和重复绑定。未命中份额、未指定具体份额或 MCP 不可用时 `shareBindings` 为空，卡片保留、`data` 不填。规则见 `references/account-card-routing.md` 份额级填值和 `references/mcp-evidence.md`。
-
-### 5. 合并最终结果
-
-完整读取 `references/result-composer.md`。
-
-将回填后的 `businessItems` 与文字任务结果合并为 `compose-input.json`，调用：
-
-```bash
-python3 scripts/compose_result.py --input compose-input.json
-```
-
-只输出脚本生成的最终 JSON。脚本失败时修正输入并重试，不得手工绕过校验。
+finalize 会重新按 `originalQuery` 计算 `responseMode`，忽略模型对复杂度的
+任何猜测，然后一次完成骨架、份额回填、Summary/Conclusion 约束、
+v2.2 合并和校验。只回传 `result.json` 的 JSON 本体。
 
 ## 失败与降级
 
 以下错误必须停止：
 
 - 上游输入缺少原始问题或问账户场景；
-- Planner 输出非法复杂度、意图、卡片或参数；
+- 三字段账户计划输出非法意图、卡片或参数；
 - 卡片重复、跨回答大类混排或固定业务骨架被修改；
-- simple 携带 Conclusion；
-- complex 缺少 Conclusion；
+- `summary_only` 携带 Conclusion；
+- `diagnostic` 缺少 Conclusion；
 - 最终编排脚本校验失败。
 
 以下数据问题不删除卡片：
@@ -246,7 +208,8 @@ python3 scripts/compose_result.py --input compose-input.json
 - 缺少可信身份或账户上下文；
 - 卡片没有已登记接口或前端尚未取数。
 
-数据不足时只降低文字判断范围。simple 仍不生成 Conclusion；complex 使用 Conclusion 明确无法形成的账户级判断。
+数据不足时只降低文字判断范围。`summary_only` 仍不生成
+Conclusion；`diagnostic` 使用 Conclusion 明确无法形成的账户级判断。
 
 ## 最终输出
 

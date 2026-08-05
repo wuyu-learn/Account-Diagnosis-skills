@@ -12,62 +12,56 @@ def read(relative_path: str) -> str:
 
 
 class GuidanceContractTests(unittest.TestCase):
-    def test_working_stance_is_always_loaded_before_resources_and_workflow(self) -> None:
+    def test_working_stance_is_loaded_before_resources_and_workflow(self) -> None:
         skill = read("SKILL.md")
-        stance = skill.index("## 账户顾问的工作立场")
-        resources = skill.index("## 资源")
-        workflow = skill.index("## 工作流")
-
-        self.assertLess(stance, resources)
-        self.assertLess(stance, workflow)
+        self.assertLess(skill.index("## 账户顾问的工作立场"), skill.index("## 资源"))
+        self.assertLess(skill.index("## 账户顾问的工作立场"), skill.index("## 工作流"))
         for rule in (
             "不只播报数据",
             "不承担产品销售",
             "不替用户决策",
-            "simple 直接回答局部问题",
-            "complex 从组合视角",
+            "`summary_only` 直接回答事实问题",
+            "`diagnostic` 从组合视角",
             "followUp",
         ):
             self.assertIn(rule, skill)
 
-    def test_simple_guidance_stays_direct_and_non_diagnostic(self) -> None:
-        simple = read("references/simple-summary.md")
+    def test_main_guidance_is_direct_and_non_diagnostic_by_default(self) -> None:
+        main = read("references/main-path.md")
         for rule in (
-            "不形成账户级诊断",
-            "不生成 Conclusion",
-            "事实与用户当前问题的关系",
-            "不因单一指标制造焦虑",
-            "可选方向",
+            "其他所有问题",
+            "summary_only",
+            "禁止该字段",
+            "1～3 个",
+            "followUp 默认空数组",
         ):
-            self.assertIn(rule, simple)
+            self.assertIn(rule, main)
 
-    def test_complex_guidance_injects_after_evidence_quality_check(self) -> None:
+    def test_diagnostic_guidance_runs_after_evidence_quality_check(self) -> None:
         skill = read("SKILL.md")
-        complex_reference = read("references/complex-diagnosis.md")
-        evidence_reference = read("references/mcp-evidence.md")
-
-        self.assertIn("MCP 返回并完成数据质量检查后", skill)
-        self.assertIn("## 复杂诊断交接", evidence_reference)
+        diagnostic = read("references/complex-diagnosis.md")
+        main = read("references/main-path.md")
+        self.assertIn("完成数据质量检查后", skill)
+        self.assertIn("范围、周期或对象不一致时不能建立关系", main)
         for rule in (
-            "## 复杂诊断注入块",
             "完整账户诊断",
-            "关系型诊断",
+            "关系诊断",
             "至少形成一个跨维度关系判断",
-            "明确哪些关系无法建立以及原因",
-            "一至三个发现并排序",
+            "哪些关系无法建立以及原因",
+            "保留一至三个发现并排序",
         ):
-            self.assertIn(rule, complex_reference)
+            self.assertIn(rule, diagnostic)
 
-    def test_complex_guidance_preserves_evidence_and_advice_boundaries(self) -> None:
-        complex_reference = read("references/complex-diagnosis.md")
+    def test_diagnostic_guidance_preserves_boundaries(self) -> None:
+        diagnostic = read("references/complex-diagnosis.md")
         for rule in (
-            "账户范围、诊断周期和对象标识一致",
+            "账户范围、周期和对象标识一致",
             "不得使用 deferred 卡片未来可能加载的数据",
             "不判断账户是否适合用户",
-            "不给出买卖或调仓结论",
-            "不输出业务 Section、卡片、最终 v2.2 字段",
+            "不给出买卖",
+            "不生成业务 Section、卡片或最终 JSON",
         ):
-            self.assertIn(rule, complex_reference)
+            self.assertIn(rule, diagnostic)
 
 
 if __name__ == "__main__":

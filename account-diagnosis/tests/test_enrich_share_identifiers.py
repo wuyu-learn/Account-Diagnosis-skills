@@ -43,10 +43,23 @@ class EnrichShareIdentifiersTests(unittest.TestCase):
     def test_injects_serial_no_and_uri_into_share_card(self) -> None:
         items = [business_item("ACC-03"), business_item("ACC-01")]
         result = enrich_share_identifiers(
-            payload(items, [{"cardId": "ACC-03", "serialNo": "S1", "uri": "U1"}])
+            payload(
+                items,
+                [
+                    {
+                        "cardId": "ACC-03",
+                        "productId": "P1",
+                        "balanceSerialNo": "S1",
+                        "uri": "U1",
+                    }
+                ],
+            )
         )
         cards = [item["card"] for item in result["businessItems"]]
-        self.assertEqual(cards[0]["data"], {"serialNo": "S1", "uri": "U1"})
+        self.assertEqual(
+            cards[0]["data"],
+            {"productId": "P1", "balanceSerialNo": "S1", "uri": "U1"},
+        )
         self.assertEqual(cards[1]["data"], {})
         # section payload is preserved
         self.assertEqual(cards[0]["cardId"], "ACC-03")
@@ -62,7 +75,7 @@ class EnrichShareIdentifiersTests(unittest.TestCase):
             enrich_share_identifiers(
                 payload(
                     [business_item("ACC-01")],
-                    [{"cardId": "ACC-01", "serialNo": "S1", "uri": "U1"}],
+                    [{"cardId": "ACC-01", "balanceSerialNo": "S1", "uri": "U1"}],
                 )
             )
 
@@ -71,7 +84,7 @@ class EnrichShareIdentifiersTests(unittest.TestCase):
             enrich_share_identifiers(
                 payload(
                     [business_item("ACC-19")],
-                    [{"cardId": "ACC-19", "serialNo": "S1", "uri": "U1"}],
+                    [{"cardId": "ACC-19", "balanceSerialNo": "S1", "uri": "U1"}],
                 )
             )
 
@@ -80,10 +93,10 @@ class EnrichShareIdentifiersTests(unittest.TestCase):
             enrich_share_identifiers(
                 payload(
                     [business_item("ACC-03")],
-                    [{"cardId": "ACC-03", "serialNo": "", "uri": "U1"}],
+                    [{"cardId": "ACC-03", "balanceSerialNo": "", "uri": "U1"}],
                 )
             )
-        with self.assertRaisesRegex(EnrichmentError, "serialNo"):
+        with self.assertRaisesRegex(EnrichmentError, "balanceSerialNo"):
             enrich_share_identifiers(
                 payload(
                     [business_item("ACC-03")],
@@ -99,7 +112,7 @@ class EnrichShareIdentifiersTests(unittest.TestCase):
                     [
                         {
                             "cardId": "ACC-03",
-                            "serialNo": "S1",
+                            "balanceSerialNo": "S1",
                             "uri": "U1",
                             "extra": "x",
                         }
@@ -112,28 +125,28 @@ class EnrichShareIdentifiersTests(unittest.TestCase):
             enrich_share_identifiers(
                 payload(
                     [business_item("ACC-01")],
-                    [{"cardId": "ACC-03", "serialNo": "S1", "uri": "U1"}],
+                    [{"cardId": "ACC-03", "balanceSerialNo": "S1", "uri": "U1"}],
                 )
             )
 
-    def test_rejects_duplicate_binding(self) -> None:
-        with self.assertRaisesRegex(EnrichmentError, "duplicate"):
-            enrich_share_identifiers(
-                payload(
-                    [business_item("ACC-03")],
-                    [
-                        {"cardId": "ACC-03", "serialNo": "S1", "uri": "U1"},
-                        {"cardId": "ACC-03", "serialNo": "S2", "uri": "U2"},
-                    ],
-                )
+    def test_ambiguous_candidates_leave_card_empty(self) -> None:
+        result = enrich_share_identifiers(
+            payload(
+                [business_item("ACC-03")],
+                [
+                    {"cardId": "ACC-03", "balanceSerialNo": "S1", "uri": "U1"},
+                    {"cardId": "ACC-03", "balanceSerialNo": "S2", "uri": "U2"},
+                ],
             )
+        )
+        self.assertEqual(result["businessItems"][0]["card"]["data"], {})
 
     def test_rejects_existing_non_share_data(self) -> None:
         with self.assertRaisesRegex(EnrichmentError, "must only carry"):
             enrich_share_identifiers(
                 payload(
                     [business_item("ACC-03", {"amount": "1"})],
-                    [{"cardId": "ACC-03", "serialNo": "S1", "uri": "U1"}],
+                    [{"cardId": "ACC-03", "balanceSerialNo": "S1", "uri": "U1"}],
                 )
             )
 

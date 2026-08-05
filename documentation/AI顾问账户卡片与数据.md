@@ -13,6 +13,10 @@
 
 原始设计文档声明本次接口均为新接口。本文档保留原接口字段的 `camelCase` 命名，不擅自改名。
 
+## 输入适配与实体字段
+
+上游 `entities` 可能以变体形式传入（例如 `funds` 对象数组而非 `fund_names`/`fund_codes` 字符串数组）。账户域入口的输入适配层负责在 Planner 之前将变体统一转换为标准六类实体数组：`fund_names`、`fund_codes`、`manager_names`、`company_names`、`market_subjects`、`strategy_names`。Planner 和卡片参数识别只消费标准格式，不再处理变体结构。
+
 ## 通用卡片结构
 
 卡片只声明组件身份、数据提供方式和组件数据，不负责标题、解释文字或页面展示顺序。

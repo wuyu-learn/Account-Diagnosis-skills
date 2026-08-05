@@ -165,6 +165,7 @@ def build_result_skeleton(payload: Any) -> dict[str, Any]:
     entries: list[tuple[int, int, dict[str, Any]]] = []
     seen_card_ids: set[str] = set()
     primary_is_watchlist = primary_intent == "watchlist_valuation"
+    primary_is_test = primary_intent == "account_test"
     if primary_is_watchlist and complexity != "simple":
         raise SkeletonError("watchlist_valuation only supports simple tasks")
 
@@ -183,7 +184,7 @@ def build_result_skeleton(payload: Any) -> dict[str, Any]:
             raise SkeletonError(f"duplicate cardId: {card_id}")
         seen_card_ids.add(card_id)
 
-        if is_watchlist_card(card_id) != primary_is_watchlist:
+        if not primary_is_test and is_watchlist_card(card_id) != primary_is_watchlist:
             raise SkeletonError(
                 "account diagnosis cards and watchlist cards must not be mixed"
             )
@@ -215,7 +216,7 @@ def build_result_skeleton(payload: Any) -> dict[str, Any]:
             "planned cards must match declared accountScenes intents: "
             + ", ".join(undeclared_types)
         )
-    if primary_intent not in business_types:
+    if not primary_is_test and primary_intent not in business_types:
         raise SkeletonError(
             "primaryAccountIntent must match at least one planned card"
         )

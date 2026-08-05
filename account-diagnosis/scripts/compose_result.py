@@ -253,6 +253,7 @@ def compose_result(payload: Any) -> dict[str, Any]:
     seen_card_ids: set[str] = set()
     previous_rank = -1
     primary_is_watchlist = primary_intent == "watchlist_valuation"
+    primary_is_test = primary_intent == "account_test"
 
     for index, raw_item in enumerate(raw_business_items):
         section, card = normalize_business_item(raw_item, index)
@@ -261,7 +262,7 @@ def compose_result(payload: Any) -> dict[str, Any]:
             raise CompositionError(f"duplicate cardId: {card_id}")
         seen_card_ids.add(card_id)
 
-        if is_watchlist_card(card_id) != primary_is_watchlist:
+        if not primary_is_test and is_watchlist_card(card_id) != primary_is_watchlist:
             raise CompositionError(
                 "account diagnosis cards and watchlist cards must not be mixed"
             )
@@ -276,7 +277,7 @@ def compose_result(payload: Any) -> dict[str, Any]:
         business_sections.append(section)
         cards.append(card)
 
-    if primary_intent not in {section["type"] for section in business_sections}:
+    if not primary_is_test and primary_intent not in {section["type"] for section in business_sections}:
         raise CompositionError(
             "primaryAccountIntent must match at least one business section"
         )

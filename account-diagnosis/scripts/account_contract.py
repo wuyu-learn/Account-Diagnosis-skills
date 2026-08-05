@@ -11,6 +11,7 @@ TASK_COMPLEXITIES: Final = frozenset({"simple", "complex"})
 
 ACCOUNT_INTENTS: Final = frozenset(
     {
+        "account_test",
         "account_overview",
         "holding_structure",
         "return_performance",
@@ -30,12 +31,13 @@ ACCOUNT_DIAGNOSIS_INTENTS: Final = frozenset(
 
 SECTION_ORDER: Final = {
     "summary": 0,
-    "account_overview": 1,
-    "holding_structure": 2,
-    "return_performance": 3,
-    "return_attribution": 4,
-    "watchlist_valuation": 5,
-    "conclusion": 6,
+    "account_test": 1,
+    "account_overview": 2,
+    "holding_structure": 3,
+    "return_performance": 4,
+    "return_attribution": 5,
+    "watchlist_valuation": 6,
+    "conclusion": 7,
 }
 
 IDENTITY_KEYS: Final = frozenset({"custNo", "accountName"})
@@ -77,7 +79,7 @@ CARD_SPECS: Final = {
         "account_overview",
         "基金持有详情",
         "下方卡片展示指定基金的持有情况。",
-        allowed_params=("serialNo", "uri"),
+        allowed_params=("balanceSerialNo", "uri", "productId"),
     ),
     "ACC-04": _spec(
         "account_overview",
@@ -88,13 +90,13 @@ CARD_SPECS: Final = {
         "account_overview",
         "投顾组合详情",
         "下方卡片展示指定投顾组合的账户和持仓情况。",
-        allowed_params=("serialNo", "uri"),
+        allowed_params=("balanceSerialNo", "uri", "productId"),
     ),
     "ACC-06": _spec(
         "account_overview",
         "投顾调仓记录",
         "下方卡片展示指定投顾组合的调仓记录。",
-        allowed_params=("serialNo", "uri"),
+        allowed_params=("balanceSerialNo", "uri", "productId"),
     ),
     "ACC-07": _spec(
         "account_overview",
@@ -105,7 +107,7 @@ CARD_SPECS: Final = {
         "account_overview",
         "货币持有详情",
         "下方卡片展示指定货币基金的持有情况。",
-        allowed_params=("serialNo", "uri"),
+        allowed_params=("balanceSerialNo", "uri", "productId"),
     ),
     "ACC-09": _spec(
         "account_overview",
@@ -116,7 +118,7 @@ CARD_SPECS: Final = {
         "account_overview",
         "专户持有详情",
         "下方卡片展示指定专户产品的持有情况。",
-        allowed_params=("serialNo", "uri"),
+        allowed_params=("balanceSerialNo", "uri", "productId"),
     ),
     "ACC-11": _spec(
         "holding_structure",

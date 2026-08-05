@@ -10,6 +10,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from build_result_skeleton import build_result_skeleton  # noqa: E402
 from compose_result import compose_result  # noqa: E402
+from normalize_input import normalize_input  # noqa: E402
 
 
 def route_plan(complexity: str) -> dict:
@@ -187,6 +188,112 @@ class AccountPipelineTests(unittest.TestCase):
                 "conclusion",
             ],
         )
+
+    def test_end_to_end_with_variant_input_and_missing_original_query(self) -> None:
+        """Upstream sends a variant JSON without originalQuery."""
+        upstream = {
+            "scenes": [
+                {
+                    "scene": "问账户",
+                    "weight": 0.9,
+                    "subQuery": "持仓添富短债债券A的定投计划的持仓明细",
+                }
+            ],
+            "entities": {"funds": [{"name": "汇添富短债债券A", "code": "006646"}]},
+            "primaryScene": "问账户",
+            "isMultiScene": False,
+            "orchestration": None,
+            "clarify": {"needed": False, "question": None},
+        }
+        route_extract = normalize_input(upstream)
+        self.assertEqual(
+            route_extract["originalQuery"],
+            "持仓添富短债债券A的定投计划的持仓明细",
+        )
+        self.assertEqual(
+            route_extract["entities"]["fund_names"],
+            ["汇添富短债债券A"],
+        )
+        self.assertEqual(
+            route_extract["entities"]["fund_codes"],
+            ["006646"],
+        )
+
+        plan = {
+            "taskComplexity": "simple",
+            "complexityReason": "用户只询问指定产品的份额明细",
+            "primaryAccountIntent": "account_overview",
+            "accountScenes": [
+                {
+                    "intent": "account_overview",
+                    "weight": 0.9,
+                    "subQuery": "持仓添富短债债券A的定投计划的持仓明细",
+                }
+            ],
+            "cardPlans": [{"cardId": "ACC-19", "params": {"productId": "006646"}}],
+        }
+        skeleton = build_result_skeleton(plan)
+        result = compose_result(
+            {
+                "scene": "问账户",
+                "taskComplexity": "simple",
+                "primaryAccountIntent": "account_overview",
+                "businessItems": skeleton["businessItems"],
+                "summary": {
+                    "title": "产品份额明细",
+                    "narrative": "基于已校验证据的直接回答。",
+                },
+                "followUp": [],
+            }
+        )
+
+        self.assertEqual(
+            set(result),
+            {"version", "meta", "sections", "cards", "risk_warning", "followUp"},
+        )
+        self.assertEqual(result["cards"][0]["cardId"], "ACC-19")
+        self.assertEqual(result["cards"][0]["data"], {"productId": "006646"})
+        self.assertNotIn("conclusion", [s["type"] for s in result["sections"]])
+
+    def test_end_to_end_with_plain_text_input(self) -> None:
+        """Upstream sends a plain text question instead of JSON."""
+        route_extract = normalize_input("我今年收益怎么样")
+        self.assertEqual(route_extract["originalQuery"], "我今年收益怎么样")
+        self.assertEqual(route_extract["scenes"][0]["scene"], "问账户")
+
+        plan = {
+            "taskComplexity": "simple",
+            "complexityReason": "用户只询问本年收益",
+            "primaryAccountIntent": "return_performance",
+            "accountScenes": [
+                {
+                    "intent": "return_performance",
+                    "weight": 0.95,
+                    "subQuery": "我今年收益怎么样",
+                }
+            ],
+            "cardPlans": [{"cardId": "ACC-13-A", "params": {}}],
+        }
+        skeleton = build_result_skeleton(plan)
+        result = compose_result(
+            {
+                "scene": "问账户",
+                "taskComplexity": "simple",
+                "primaryAccountIntent": "return_performance",
+                "businessItems": skeleton["businessItems"],
+                "summary": {
+                    "title": "今年收益概况",
+                    "narrative": "基于已校验证据的直接回答。",
+                },
+                "followUp": [],
+            }
+        )
+
+        self.assertEqual(
+            [section["type"] for section in result["sections"]],
+            ["summary", "return_performance"],
+        )
+        self.assertEqual(result["cards"][0]["cardId"], "ACC-13-A")
 
 
 if __name__ == "__main__":

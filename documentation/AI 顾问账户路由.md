@@ -10,7 +10,49 @@
 
 账户域接收 Global Phase A 的完整 Route Extract JSON：保留新增的只读 `originalQuery`，以及现有的 `scenes`、`entities`、`primaryScene`、`isMultiScene`、`orchestration` 和 `clarify`。不增加包装层，也不删改现有字段。
 
-- `originalQuery` 保留用户问题的完整语义，账户域只能读取，不能改写；
+为提升上游兼容性，账户域入口可增加输入适配层（`normalize_input`），处理以下情况：
+
+- 输入不是 JSON 时，将其整体作为 `originalQuery`，并生成一条默认问账户 `scene`；
+- 缺少 `originalQuery` 时，从 `scenes[].subQuery` 拼接派生；
+- `entities` 使用变体结构（如 `funds` 对象数组）时，转换为标准六类字符串数组；
+- 缺少 `primaryScene`、`isMultiScene`、`orchestration` 或 `clarify` 时，按默认值补齐；
+- 没有任何 `scene = 问账户` 时，仍返回结构错误。
+
+适配层不改变 `originalQuery` 语义，不重新解释用户问题，只完成字段标准化。Planner 按适配后的标准协议读取。
+
+标准 Route Extract 示例：
+
+```json
+{
+  "originalQuery": "我今年收益怎么样",
+  "scenes": [
+    {
+      "scene": "问账户",
+      "weight": 0.95,
+      "subQuery": "我今年收益怎么样"
+    }
+  ],
+  "entities": {
+    "fund_names": [],
+    "fund_codes": [],
+    "manager_names": [],
+    "company_names": [],
+    "market_subjects": [],
+    "strategy_names": []
+  },
+  "primaryScene": "问账户",
+  "isMultiScene": false,
+  "orchestration": null,
+  "clarify": {
+    "needed": false,
+    "question": null
+  }
+}
+```
+
+规则：
+
+- `originalQuery` 保留用户问题的完整语义，账户域只能读取，不能改写；若由适配层派生，需在日志中标记为派生；
 - `scenes[].subQuery` 用于拆分账户意图、选卡和识别参数，不能替代 `originalQuery`；
 - 账户域只处理 `scene = 问账户` 的记录，但接收的仍是完整上游 JSON；
 - 上游字段和账户内部计划字段都不写入最终 v2.2 结果。

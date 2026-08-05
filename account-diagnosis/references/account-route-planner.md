@@ -26,7 +26,7 @@
 
 ## 上游输入
 
-上游必须原样提供：
+Planner 接收已由入口适配层标准化的 Route Extract JSON。上游必须原样提供：
 
 ```json
 {
@@ -43,6 +43,8 @@
 }
 ```
 
+若上游未严格按此格式输出（例如缺少 `originalQuery`、`entities` 为变体、甚至传入纯文本），由 `scripts/normalize_input.py` 在 Planner 之前完成标准化。Planner 不处理变体结构。
+
 规则：
 
 - `originalQuery` 是可信上游透传的原始文本，禁止改写或在计划中重复生成；
@@ -58,6 +60,7 @@
 
 | intent | 范围 |
 | --- | --- |
+| `account_test` | 卡片测试、验收场景；命中测试指令后由固定规则出卡，不走语义路由 |
 | `account_overview` | 总资产、分账户、组合、单产品持有和份额 |
 | `holding_structure` | 持仓明细、资产/地区/行业结构和集中度 |
 | `return_performance` | 收益总览、分年表现、收益日历和基准比较 |
@@ -65,6 +68,16 @@
 | `watchlist_valuation` | 自选基金估值、净值更新和当日涨跌 |
 
 一个独立账户诉求生成一条 `accountScenes`。数组按权重降序；第一条 intent 为 `primaryAccountIntent`。
+
+### `account_test` 特殊规则
+
+当 `originalQuery` 或任一 `scenes[].subQuery` 包含测试关键字（如 `全部卡片测试`、`ACC-01测试`）时，识别为 `account_test` 意图：
+
+- `taskComplexity` 固定为 `simple`；
+- `primaryAccountIntent` 为 `account_test`；
+- `cardPlans` 不按 `account-card-routing.md` 的常规组合规则自由挑选，而由测试模式固定规则决定（详见 `references/card-test-mode.md`）；
+- 不生成 `conclusion`；
+- 允许诊断类卡片与 `ACC-18` 同时出现（测试模式放宽的边界）。
 
 用户明确要求完整账户诊断、账户体检或整体分析时，按 `account-card-routing.md` 的完整诊断规则展开所需 `accountScenes` 和 `cardPlans`。一般 complex 关系问题仍只覆盖用户实际要求的维度，不自动扩展为完整诊断。
 

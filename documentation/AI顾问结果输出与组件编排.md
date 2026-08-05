@@ -137,6 +137,7 @@ summary
 
 ```text
 用户问题
+→ 输入适配（标准化 Route Extract）
 → 账户意图识别
 → 根据 subQuery 选择精确卡片
 → 根据回答类型选择标准模板

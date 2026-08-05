@@ -236,12 +236,12 @@ class ComposeResultTests(unittest.TestCase):
 
         result = compose_result(
             payload_for(
-                [business_item("ACC-03", {"serialNo": "S1", "uri": "U1"})],
+                [business_item("ACC-03", {"balanceSerialNo": "S1", "uri": "U1"})],
                 "account_overview",
             )
         )
         self.assertEqual(
-            result["cards"][0]["data"], {"serialNo": "S1", "uri": "U1"}
+            result["cards"][0]["data"], {"balanceSerialNo": "S1", "uri": "U1"}
         )
 
     def test_rejects_final_or_internal_fields_as_input(self) -> None:

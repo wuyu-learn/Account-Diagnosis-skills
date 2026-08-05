@@ -31,9 +31,12 @@ references/mcp-evidence.md           MCP 能力、数据质量和证据边界
 references/simple-summary.md         simple Summary 任务
 references/complex-diagnosis.md      complex 账户诊断任务
 references/result-composer.md        最终合并协议
+references/card-test-mode.md         测试模式 runbook（可移除）
+scripts/normalize_input.py           上游输入适配与字段标准化
 scripts/build_result_skeleton.py     固定业务骨架生成与计划校验
 scripts/enrich_share_identifiers.py  份额级 serialNo/uri 回填
 scripts/compose_result.py             最终 v2.2 合并与校验
+scripts/test_mode/                    测试模式隔离链路（可移除）
 ```
 
 按工作流完整读取指定 reference。不要把 references 当作独立 Skill。
@@ -81,6 +84,49 @@ scripts/compose_result.py             最终 v2.2 合并与校验
 
 ## 工作流
 
+### 0. 输入适配
+
+账户域入口首先读取上游输入并调用：
+
+```bash
+python3 scripts/normalize_input.py --input upstream.json --output route-extract.json
+```
+
+`normalize_input.py` 负责：
+
+- 将非 JSON 文本（如用户原始问题字符串）转换为标准 Route Extract；
+- 补齐缺失的 `originalQuery`（从 `scenes[].subQuery` 派生）；
+- 将 `entities` 变体（如 `funds` 对象数组）转换为标准六类字符串数组；
+- 为缺失的 `primaryScene`、`isMultiScene`、`orchestration`、`clarify` 填充默认值；
+- 当输入没有任何 `scene = 问账户` 或无法得到 `originalQuery` 时返回结构错误。
+
+适配不改变 `originalQuery` 语义，不重新解释用户问题。下游 Planner 和脚本只读取标准 Route Extract。
+
+### 0.5 测试模式（可移除）
+
+在输入适配之后、生成账户计划之前，先运行测试模式拦截器：
+
+```bash
+python3 scripts/test_mode/interceptor.py --input route-extract.json --output test-mode-signal.json
+```
+
+拦截器只做一件事：**判断输入是否以 `问账户：` 开头**。
+
+- 若 `originalQuery` 或任一 `scenes[].subQuery` 以 `问账户：` 开头，输出 `{"testMode": true}`，LLM 读取 `references/card-test-mode.md` 后自行决定走全量测试、单卡测试，还是按普通账户问题处理；
+- 若未以 `问账户：` 开头，输出 `{"testMode": false}`，继续步骤 1。
+
+具体测试计划（全量 18 张或单卡若干张）由 `scripts/test_mode/interceptor.py` 提供的 `build_test_plan()` 生成，agent 按需调用。测试链路复用共享的 `build_result_skeleton.py` 和 `compose_result.py`；`account_test` 意图下允许诊断类卡片与 `ACC-18` 混排，且不生成 `conclusion`。`queryHoldingDetail`(type=1) 原始数据通过文件传给 `enrich_test_cards.py`，由脚本为份额级卡片（ACC-03/05/06/08/10）及 ACC-19 自动挑值。流水线完成后输出固定 v2.2 JSON 并结束，不进入下方正常流程。
+
+命中测试指令后，完整读取 `references/card-test-mode.md`，按测试链路执行：
+
+```text
+interceptor.py → build_result_skeleton.py → enrich_test_cards.py → compose_result.py
+```
+
+测试链路复用共享的 `build_result_skeleton.py` 和 `compose_result.py`；`account_test` 意图下允许诊断类卡片与 `ACC-18` 混排，且不生成 `conclusion`。`queryHoldingDetail`(type=1) 原始数据通过文件传给 `enrich_test_cards.py`，由脚本为份额级卡片（ACC-03/05/06/08/10）自动挑 `productId`/`balanceSerialNo`/`uri`（ACC-19 的多渠道 `productId` 判定暂搁置）。流水线完成后输出固定 v2.2 JSON 并结束，不进入下方正常流程。
+
+测试模式自成隔离链路，不修改共享脚本；删除 `scripts/test_mode/`、`references/card-test-mode.md` 和 `tests/test_test_mode.py` 即可完全回退。
+
 ### 1. 生成账户计划
 
 完整读取：
@@ -90,7 +136,7 @@ references/account-route-planner.md
 references/account-card-routing.md
 ```
 
-基于 `originalQuery`、问账户 scenes 和 entities 输出内部计划：
+基于已适配的 `originalQuery`、问账户 scenes 和 entities 输出内部计划：
 
 ```json
 {

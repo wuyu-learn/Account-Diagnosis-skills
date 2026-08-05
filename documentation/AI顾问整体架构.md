@@ -92,6 +92,7 @@ ${json串}
 - `${json串}` 必须是 Global Phase A 生成的完整 JSON，不得只传目标场景的 `subQuery`，也不得重新生成或改写。
 - 子 Agent 从完整 JSON 的 `scenes[]` 中读取属于本业务域的记录，并读取不可改写的 `originalQuery`；其他全局字段仍作为上游上下文完整传入。
 - 同一业务域即使包含多个二级意图，也由该业务域子 Agent 在内部继续拆分，不由主 Agent 提前转换成业务域内部意图。
+- 子 Agent 入口可增加轻量输入适配层，将非标准 JSON、字段缺失或 `entities` 变体统一转换为标准 Route Extract，再进入后续流程。适配层不改变 `originalQuery` 语义，只补齐或转换字段。
 
 问账户示例：
 
@@ -151,6 +152,7 @@ Global Phase B：场景分发
         ↓
 问账户业务分支
 └── account-diagnosis（账户总控入口）
+    ├── 输入适配：将上游输入统一转换为标准 Route Extract
     ├── LLM：识别账户意图、复杂度、卡片和参数
     ├── 代码：校验计划并生成固定业务骨架
     ├── simple：最少必要 MCP + Summary
